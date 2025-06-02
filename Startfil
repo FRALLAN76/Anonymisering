@@ -1,72 +1,7 @@
-Run this
+# Create Swedish Presidio setup with KBLab models
+mkdir -p presidio-swedish-setup/{emails,output} && cd presidio-swedish-setup
 
-# Create the complete Presidio email anonymization setup
-mkdir -p presidio-email-setup/{emails,output} && cd presidio-email-setup
-
-# Create docker-compose.yml
-cat > docker-compose.yml << 'EOF'
-version: '3.8'
-
-services:
-  presidio-analyzer:
-    image: mcr.microsoft.com/presidio-analyzer:latest
-    ports:
-      - "5001:3000"
-    environment:
-      - PORT=3000
-    volumes:
-      - ./emails:/app/emails
-      - ./output:/app/output
-
-  presidio-anonymizer:
-    image: mcr.microsoft.com/presidio-anonymizer:latest
-    ports:
-      - "5002:3000"
-    environment:
-      - PORT=3000
-    volumes:
-      - ./emails:/app/emails
-      - ./output:/app/output
-
-  email-processor:
-    build: .
-    depends_on:
-      - presidio-analyzer
-      - presidio-anonymizer
-    volumes:
-      - ./emails:/app/emails
-      - ./output:/app/output
-    environment:
-      - ANALYZER_URL=http://presidio-analyzer:3000
-      - ANONYMIZER_URL=http://presidio-anonymizer:3000
-EOF
-
-# Create Dockerfile
-cat > Dockerfile << 'EOF'
-FROM python:3.9-slim
-
-WORKDIR /app
-
-# Install required packages
-RUN pip install requests python-multipart
-
-# Copy processing script
-COPY email_processor.py .
-COPY requirements.txt .
-
-RUN pip install -r requirements.txt
-
-CMD ["python", "email_processor.py"]
-EOF
-
-# Create requirements.txt
-cat > requirements.txt << 'EOF'
-requests
-python-multipart
-email-validator
-EOF
-
-# Create email_processor.py
+# Create enhanced email_processor.py with Swedish models
 cat > email_processor.py << 'EOF'
 import requests
 import json
@@ -80,11 +15,13 @@ import time
 ANALYZER_URL = os.getenv('ANALYZER_URL', 'http://localhost:5001')
 ANONYMIZER_URL = os.getenv('ANONYMIZER_URL', 'http://localhost:5002')
 
-def analyze_text(text):
-    """Send text to Presidio Analyzer"""
+def analyze_text_swedish(text):
+    """Send Swedish text to Presidio Analyzer with Swedish model"""
     payload = {
         "text": text,
-        "language": "en"
+        "language": "sv",  # Swedish language code
+        "nlp_artifacts": None,
+        "entities": ["PERSON", "LOCATION", "ORGANIZATION", "DATE_TIME", "PHONE_NUMBER", "EMAIL_ADDRESS"]
     }
     
     response = requests.post(
@@ -103,7 +40,15 @@ def anonymize_text(text, analyzer_results):
     """Send text and analysis results to Presidio Anonymizer"""
     payload = {
         "text": text,
-        "analyzer_results": analyzer_results
+        "analyzer_results": analyzer_results,
+        "transformations": {
+            "PERSON": {"type": "replace", "new_value": "<PERSON>"},
+            "LOCATION": {"type": "replace", "new_value": "<PLATS>"},
+            "ORGANIZATION": {"type": "replace", "new_value": "<ORGANISATION>"},
+            "DATE_TIME": {"type": "replace", "new_value": "<DATUM>"},
+            "PHONE_NUMBER": {"type": "replace", "new_value": "<TELEFON>"},
+            "EMAIL_ADDRESS": {"type": "replace", "new_value": "<EPOST>"}
+        }
     }
     
     response = requests.post(
@@ -119,17 +64,18 @@ def anonymize_text(text, analyzer_results):
         return text
 
 def process_email_content(text):
-    """Complete anonymization pipeline"""
-    # Analyze for PII
-    analyzer_results = analyze_text(text)
+    """Complete Swedish anonymization pipeline"""
+    # Analyze for Swedish PII
+    analyzer_results = analyze_text_swedish(text)
     
     # Anonymize based on analysis
     anonymized_text = anonymize_text(text, analyzer_results)
     
     return anonymized_text, analyzer_results
 
+# Rest of the code remains the same...
 def process_email_file(file_path):
-    """Process a single email file"""
+    """Process a single email file with Swedish models"""
     try:
         with open(file_path, 'rb') as f:
             msg = email.message_from_binary_file(f, policy=policy.default)
@@ -155,7 +101,7 @@ def process_email_file(file_path):
             except:
                 body = str(msg.get_payload())
         
-        # Process subject and body
+        # Process subject and body with Swedish models
         anonymized_subject, subject_analysis = process_email_content(subject)
         anonymized_body, body_analysis = process_email_content(body)
         
@@ -183,134 +129,209 @@ def process_all_emails():
     email_dir = "/app/emails"
     output_dir = "/app/output"
     
-    # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
     
-    # Find all email files
     email_files = []
     for ext in ['*.eml', '*.msg', '*.txt']:
         email_files.extend(glob.glob(os.path.join(email_dir, ext)))
     
-    print(f"Found {len(email_files)} email files to process")
+    print(f"Hittade {len(email_files)} email-filer att bearbeta")
     
-    # Process each file
     for email_file in email_files:
-        print(f"Processing: {os.path.basename(email_file)}")
+        print(f"Bearbetar: {os.path.basename(email_file)}")
         
         result = process_email_file(email_file)
         
         if result:
-            # Save anonymized email
-            output_filename = os.path.basename(email_file).replace('.eml', '_anonymized.txt')
+            output_filename = os.path.basename(email_file).replace('.eml', '_anonymiserad.txt')
             output_path = os.path.join(output_dir, output_filename)
             
             with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(f"Subject: {result['anonymized_subject']}\n")
-                f.write(f"From: {result['from']}\n")
-                f.write(f"To: {result['to']}\n") 
-                f.write(f"Date: {result['date']}\n")
-                f.write(f"Original File: {result['original_file']}\n")
+                f.write(f"Ämne: {result['anonymized_subject']}\n")
+                f.write(f"Från: {result['from']}\n")
+                f.write(f"Till: {result['to']}\n") 
+                f.write(f"Datum: {result['date']}\n")
+                f.write(f"Originalfil: {result['original_file']}\n")
                 f.write("\n" + "="*50 + "\n")
-                f.write("ANONYMIZED EMAIL CONTENT:\n")
+                f.write("ANONYMISERAT EMAIL-INNEHÅLL:\n")
                 f.write("="*50 + "\n\n")
                 f.write(result['anonymized_body'])
             
-            # Save analysis report
-            report_filename = os.path.basename(email_file).replace('.eml', '_analysis.json')
+            report_filename = os.path.basename(email_file).replace('.eml', '_analys.json')
             report_path = os.path.join(output_dir, report_filename)
             
             with open(report_path, 'w') as f:
-                json.dump(result['pii_found'], f, indent=2)
+                json.dump(result['pii_found'], f, indent=2, ensure_ascii=False)
             
-            print(f"✓ Saved: {output_filename}")
+            print(f"✓ Sparad: {output_filename}")
         
-        # Small delay to avoid overwhelming the services
         time.sleep(0.1)
 
 if __name__ == "__main__":
-    print("Waiting for Presidio services to start...")
-    time.sleep(10)  # Give services time to start
+    print("Väntar på att Presidio-tjänsterna ska starta...")
+    time.sleep(10)
     
-    print("Starting email processing...")
+    print("Startar email-bearbetning med svenska modeller...")
     process_all_emails()
-    print("Email processing complete!")
+    print("Email-bearbetning klar!")
 EOF
 
-# Create a sample test email
-cat > emails/test.eml << 'EOF'
-From: john.doe@municipality.gov
-To: jane.smith@example.com
-Subject: Tax Assessment for 123 Main Street
+# Create Swedish model configuration
+cat > swedish_nlp_config.yml << 'EOF'
+nlp_engine_name: transformers
+models:
+  - lang_code: sv
+    model_name: 
+      spacy: sv_core_news_sm
+      transformers: KB/bert-base-swedish-cased-ner
+    ner_model_configuration:
+      labels_to_ignore:
+        - O
+      aggregation_strategy: max
+      stride: 16
+      alignment_mode: expand
+      model_to_presidio_entity_mapping:
+        PRS: PERSON
+        LOC: LOCATION  
+        ORG: ORGANIZATION
+        TME: DATE_TIME
+        EVN: EVENT
+      low_confidence_score_multiplier: 0.4
+      low_score_entity_names:
+        - EVENT
+EOF
+
+# Create Swedish test email
+cat > emails/test_svenska.eml << 'EOF'
+From: erik.andersson@kommun.se
+To: anna.larsson@example.se
+Subject: Skattebeslut för Storgatan 15
 Date: Mon, 1 Jun 2024 10:00:00 +0000
 
-Dear Jane Smith,
+Hej Anna Larsson,
 
-Your property tax assessment for 123 Main Street (SSN: 123-45-6789) 
-has been completed. Please call us at (555) 123-4567 for any questions.
+Din skattebedömning för fastigheten på Storgatan 15 (personnummer: 19850615-1234) 
+har slutförts. Vänligen kontakta oss på 08-123 456 78 för eventuella frågor.
 
-The assessment amount is $2,500 for the property located at:
-123 Main Street
-Springfield, IL 62701
+Bedömningsbeloppet är 25 000 kronor för fastigheten belägen på:
+Storgatan 15
+Stockholm, 11122
 
-Best regards,
-John Doe
-Tax Assessment Department
-City of Springfield
-Phone: (555) 987-6543
-Email: john.doe@municipality.gov
+Med vänliga hälsningar,
+Erik Andersson
+Skattebedömningsavdelningen
+Stockholms Kommun
+Telefon: 08-987 654 32
+E-post: erik.andersson@kommun.se
+EOF
+
+# Create custom Dockerfile with Swedish models
+cat > Dockerfile << 'EOF'
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# Install required packages
+RUN pip install requests python-multipart transformers torch
+
+# Copy processing script and config
+COPY email_processor.py .
+COPY requirements.txt .
+COPY swedish_nlp_config.yml .
+
+RUN pip install -r requirements.txt
+
+# Pre-download Swedish models to speed up runtime
+RUN python -c "from transformers import AutoTokenizer, AutoModel; AutoTokenizer.from_pretrained('KB/bert-base-swedish-cased-ner'); AutoModel.from_pretrained('KB/bert-base-swedish-cased-ner')"
+
+CMD ["python", "email_processor.py"]
+EOF
+
+# Update requirements for Swedish models
+cat > requirements.txt << 'EOF'
+requests
+python-multipart
+email-validator
+transformers
+torch
+EOF
+
+# Standard docker-compose.yml (same as before)
+cat > docker-compose.yml << 'EOF'
+version: '3.8'
+
+services:
+  presidio-analyzer:
+    image: mcr.microsoft.com/presidio-analyzer:latest
+    ports:
+      - "5001:3000"
+    environment:
+      - PORT=3000
+    volumes:
+      - ./emails:/app/emails
+      - ./output:/app/output
+      - ./swedish_nlp_config.yml:/app/config.yml
+
+  presidio-anonymizer:
+    image: mcr.microsoft.com/presidio-anonymizer:latest
+    ports:
+      - "5002:3000"
+    environment:
+      - PORT=3000
+    volumes:
+      - ./emails:/app/emails
+      - ./output:/app/output
+
+  email-processor:
+    build: .
+    depends_on:
+      - presidio-analyzer
+      - presidio-anonymizer
+    volumes:
+      - ./emails:/app/emails
+      - ./output:/app/output
+    environment:
+      - ANALYZER_URL=http://presidio-analyzer:3000
+      - ANONYMIZER_URL=http://presidio-anonymizer:3000
 EOF
 
 # Create startup script
 cat > start.sh << 'EOF'
 #!/bin/bash
-echo "Starting Presidio Email Anonymization System..."
-echo "=========================================="
+echo "Startar Presidio Email Anonymization System med Svenska Modeller..."
+echo "=================================================================="
 
-# Start services
 docker-compose up -d presidio-analyzer presidio-anonymizer
 
-echo "Waiting for services to be ready..."
-sleep 15
+echo "Väntar på att tjänsterna ska vara redo..."
+sleep 20
 
-# Check if services are running
-echo "Checking service status..."
-docker-compose ps
-
+echo "Tjänster startade! Du kan nu:"
+echo "1. Lägg svenska email-filer (.eml, .msg, .txt) i 'emails/' mappen"
+echo "2. Kör: docker-compose up email-processor"
+echo "3. Kontrollera resultat i 'output/' mappen"
 echo ""
-echo "Services started! You can now:"
-echo "1. Put your email files (.eml, .msg, .txt) in the 'emails/' folder"
-echo "2. Run: docker-compose up email-processor"
-echo "3. Check results in the 'output/' folder"
-echo ""
-echo "To test with the sample email: docker-compose up email-processor"
-echo "To stop all services: docker-compose down"
+echo "För att testa med det svenska exemplet: docker-compose up email-processor"
+echo "För att stoppa alla tjänster: docker-compose down"
 EOF
 
 chmod +x start.sh
 
-# Create complete usage instructions
-cat > README.md << 'EOF'
-# Presidio Email Anonymization Setup
-
-## Quick Start
-1. Put your email files in the `emails/` folder
-2. Run: `./start.sh`
-3. Process emails: `docker-compose up email-processor`
-4. Check results in `output/` folder
-
-## Commands
-- Start services: `docker-compose up -d`
-- Process emails: `docker-compose up email-processor`
-- Stop everything: `docker-compose down`
-- View logs: `docker-compose logs`
-
-## File Structure
-- `emails/` - Put your original email files here (.eml, .msg, .txt)
-- `output/` - Anonymized emails and analysis reports appear here
-- Sample test email is already included in emails/test.eml
-
-## Testing
-A sample email is already created. Just run:
-```bash
-./start.sh
-docker-compose up email-processor
+echo "✅ Svensk Presidio email-anonymiseringssetup skapad!"
+echo ""
+echo "📁 Katalogstruktur:"
+echo "   presidio-swedish-setup/"
+echo "   ├── emails/test_svenska.eml (svenska exempel-email)"
+echo "   ├── output/ (resultat visas här)"
+echo "   ├── swedish_nlp_config.yml (svensk modellkonfiguration)"
+echo "   ├── docker-compose.yml"
+echo "   ├── Dockerfile (med svenska modeller)"
+echo "   ├── email_processor.py"
+echo "   └── start.sh"
+echo ""
+echo "🚀 För att komma igång:"
+echo "   1. ./start.sh"
+echo "   2. docker-compose up email-processor"
+echo "   3. Kontrollera output/ mappen för resultat"
+echo ""
+echo "🇸🇪 Använder KB/bert-base-swedish-cased-ner för svensk PII-detektering"
