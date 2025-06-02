@@ -1,337 +1,323 @@
-# Create Swedish Presidio setup with KBLab models
-mkdir -p presidio-swedish-setup/{emails,output} && cd presidio-swedish-setup
+# Create and activate virtual environment
+python3 -m venv swedish-anonymizer-env
+source swedish-anonymizer-env/bin/activate  # Linux/Mac
+# OR on Windows: swedish-anonymizer-env\Scripts\activate
 
-# Create enhanced email_processor.py with Swedish models
-cat > email_processor.py << 'EOF'
-import requests
-import json
-import os
-import email
-from email import policy
+# Upgrade pip
+pip install --upgrade pip
+
+# Create project directory
+mkdir swedish-email-anonymizer && cd swedish-email-anonymizer
+
+# Install requirements
+pip install torch transformers tokenizers
+
+# Create the anonymizer script
+cat > swedish_anonymizer.py << 'EOF'
+from transformers import pipeline, AutoTokenizer, AutoModelForTokenClassification
+import re
 import glob
-import time
+import os
 
-# Presidio service URLs
-ANALYZER_URL = os.getenv('ANALYZER_URL', 'http://localhost:5001')
-ANONYMIZER_URL = os.getenv('ANONYMIZER_URL', 'http://localhost:5002')
+class SwedishEmailAnonymizer:
+    def __init__(self):
+        print("🇸🇪 Loading Swedish BERT NER model from KBLab...")
+        print("   (This may take a few minutes on first run - downloading ~1.3GB)")
+        
+        self.tokenizer = AutoTokenizer.from_pretrained('KB/bert-base-swedish-cased-ner')
+        self.model = AutoModelForTokenClassification.from_pretrained('KB/bert-base-swedish-cased-ner')
+        self.nlp = pipeline('ner', 
+                           model=self.model, 
+                           tokenizer=self.tokenizer,
+                           aggregation_strategy='simple')
+        print("✅ Model loaded successfully!")
 
-def analyze_text_swedish(text):
-    """Send Swedish text to Presidio Analyzer with Swedish model"""
-    payload = {
-        "text": text,
-        "language": "sv",  # Swedish language code
-        "nlp_artifacts": None,
-        "entities": ["PERSON", "LOCATION", "ORGANIZATION", "DATE_TIME", "PHONE_NUMBER", "EMAIL_ADDRESS"]
-    }
-    
-    response = requests.post(
-        f"{ANALYZER_URL}/analyze",
-        json=payload,
-        headers={'Content-Type': 'application/json'}
-    )
-    
-    if response.status_code == 200:
-        return response.json()
-    else:
-        print(f"Analyzer error: {response.status_code} - {response.text}")
-        return []
-
-def anonymize_text(text, analyzer_results):
-    """Send text and analysis results to Presidio Anonymizer"""
-    payload = {
-        "text": text,
-        "analyzer_results": analyzer_results,
-        "transformations": {
-            "PERSON": {"type": "replace", "new_value": "<PERSON>"},
-            "LOCATION": {"type": "replace", "new_value": "<PLATS>"},
-            "ORGANIZATION": {"type": "replace", "new_value": "<ORGANISATION>"},
-            "DATE_TIME": {"type": "replace", "new_value": "<DATUM>"},
-            "PHONE_NUMBER": {"type": "replace", "new_value": "<TELEFON>"},
-            "EMAIL_ADDRESS": {"type": "replace", "new_value": "<EPOST>"}
+    def detect_swedish_patterns(self, text):
+        """Detect Swedish-specific patterns like personnummer, phone numbers, etc."""
+        patterns = {
+            'PERSONNUMMER': r'\b\d{6}-\d{4}\b|\b\d{8}-\d{4}\b|\b\d{10}\b|\b\d{12}\b',
+            'TELEFON': r'\b0\d{1,3}[- ]?\d{6,8}\b|\b\+46[- ]?\d{1,3}[- ]?\d{6,8}\b',
+            'POSTNUMMER': r'\b\d{3}\s?\d{2}\b(?=\s+[A-ZÅÄÖ])',
+            'EMAIL': r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
         }
-    }
-    
-    response = requests.post(
-        f"{ANONYMIZER_URL}/anonymize",
-        json=payload,
-        headers={'Content-Type': 'application/json'}
-    )
-    
-    if response.status_code == 200:
-        return response.json()['text']
-    else:
-        print(f"Anonymizer error: {response.status_code} - {response.text}")
-        return text
-
-def process_email_content(text):
-    """Complete Swedish anonymization pipeline"""
-    # Analyze for Swedish PII
-    analyzer_results = analyze_text_swedish(text)
-    
-    # Anonymize based on analysis
-    anonymized_text = anonymize_text(text, analyzer_results)
-    
-    return anonymized_text, analyzer_results
-
-# Rest of the code remains the same...
-def process_email_file(file_path):
-    """Process a single email file with Swedish models"""
-    try:
-        with open(file_path, 'rb') as f:
-            msg = email.message_from_binary_file(f, policy=policy.default)
         
-        # Extract email parts
-        subject = msg.get('Subject', '')
-        sender = msg.get('From', '')
-        recipient = msg.get('To', '')
-        date = msg.get('Date', '')
+        found = []
+        for pattern_type, pattern in patterns.items():
+            for match in re.finditer(pattern, text):
+                found.append({
+                    'entity_group': pattern_type,
+                    'start': match.start(),
+                    'end': match.end(),
+                    'word': match.group(),
+                    'score': 0.99
+                })
+        return found
+
+    def anonymize_text(self, text):
+        """Anonymize Swedish text using BERT + regex patterns"""
+        if not text.strip():
+            return text, []
+            
+        # Get NER results from Swedish BERT
+        try:
+            ner_results = self.nlp(text)
+        except Exception as e:
+            print(f"   Warning: NER failed for text snippet: {e}")
+            ner_results = []
         
-        # Get body content
-        if msg.is_multipart():
-            body = ""
-            for part in msg.walk():
-                if part.get_content_type() == "text/plain":
+        # Get Swedish pattern matches
+        pattern_results = self.detect_swedish_patterns(text)
+        
+        # Combine and sort by position (reverse order for safe replacement)
+        all_entities = ner_results + pattern_results
+        all_entities.sort(key=lambda x: x['start'], reverse=True)
+        
+        # Swedish anonymization mapping
+        replacements = {
+            'PRS': '<PERSON>',
+            'PERSON': '<PERSON>',
+            'LOC': '<PLATS>',
+            'LOCATION': '<PLATS>',
+            'ORG': '<ORGANISATION>',
+            'ORGANIZATION': '<ORGANISATION>',
+            'TME': '<DATUM>',
+            'DATE_TIME': '<DATUM>',
+            'EVN': '<HÄNDELSE>',
+            'EVENT': '<HÄNDELSE>',
+            'PERSONNUMMER': '<PERSONNUMMER>',
+            'TELEFON': '<TELEFON>',
+            'POSTNUMMER': '<POSTNUMMER>',
+            'EMAIL': '<EPOST>'
+        }
+        
+        # Replace entities (working backwards to preserve positions)
+        result = text
+        entities_replaced = []
+        
+        for entity in all_entities:
+            if entity['score'] > 0.7:  # Confidence threshold
+                entity_type = entity['entity_group']
+                replacement = replacements.get(entity_type, f'<{entity_type}>')
+                start, end = entity['start'], entity['end']
+                original_word = result[start:end]
+                result = result[:start] + replacement + result[end:]
+                entities_replaced.append({
+                    'type': entity_type,
+                    'original': original_word,
+                    'replacement': replacement,
+                    'confidence': entity['score']
+                })
+        
+        return result, entities_replaced
+
+    def process_email_file(self, filepath):
+        """Process a single email file"""
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Simple email parsing
+            lines = content.split('\n')
+            headers = {}
+            body_start = 0
+            
+            # Extract headers
+            for i, line in enumerate(lines):
+                if ':' in line and i < 20:  # Headers usually in first 20 lines
                     try:
-                        body += part.get_content()
-                    except:
-                        body += str(part.get_payload())
-        else:
-            try:
-                body = msg.get_content()
-            except:
-                body = str(msg.get_payload())
-        
-        # Process subject and body with Swedish models
-        anonymized_subject, subject_analysis = process_email_content(subject)
-        anonymized_body, body_analysis = process_email_content(body)
-        
-        return {
-            'original_file': file_path,
-            'original_subject': subject,
-            'anonymized_subject': anonymized_subject,
-            'original_body': body,
-            'anonymized_body': anonymized_body,
-            'from': sender,
-            'to': recipient,
-            'date': date,
-            'pii_found': {
-                'subject': subject_analysis,
-                'body': body_analysis
+                        key, value = line.split(':', 1)
+                        headers[key.strip()] = value.strip()
+                    except ValueError:
+                        continue
+                elif line.strip() == '':
+                    body_start = i + 1
+                    break
+            
+            body = '\n'.join(lines[body_start:])
+            subject = headers.get('Subject', '')
+            
+            # Anonymize subject and body
+            anon_subject, subject_entities = self.anonymize_text(subject)
+            anon_body, body_entities = self.anonymize_text(body)
+            
+            total_entities = len(subject_entities) + len(body_entities)
+            
+            return {
+                'file': filepath,
+                'headers': headers,
+                'anonymized_subject': anon_subject,
+                'anonymized_body': anon_body,
+                'entities_replaced': {
+                    'subject': subject_entities,
+                    'body': body_entities
+                },
+                'total_entities': total_entities
             }
-        }
-        
-    except Exception as e:
-        print(f"Error processing {file_path}: {e}")
-        return None
+            
+        except Exception as e:
+            print(f"❌ Error processing {filepath}: {e}")
+            return None
 
-def process_all_emails():
-    """Process all emails in the emails directory"""
-    email_dir = "/app/emails"
-    output_dir = "/app/output"
-    
-    os.makedirs(output_dir, exist_ok=True)
-    
-    email_files = []
-    for ext in ['*.eml', '*.msg', '*.txt']:
-        email_files.extend(glob.glob(os.path.join(email_dir, ext)))
-    
-    print(f"Hittade {len(email_files)} email-filer att bearbeta")
-    
-    for email_file in email_files:
-        print(f"Bearbetar: {os.path.basename(email_file)}")
+    def process_folder(self, folder='emails'):
+        """Process all emails in folder"""
+        # Create directories
+        os.makedirs(folder, exist_ok=True)
+        os.makedirs('output', exist_ok=True)
         
-        result = process_email_file(email_file)
+        # Find email files
+        email_extensions = ['*.eml', '*.txt', '*.msg']
+        files = []
+        for ext in email_extensions:
+            files.extend(glob.glob(f'{folder}/{ext}'))
         
-        if result:
-            output_filename = os.path.basename(email_file).replace('.eml', '_anonymiserad.txt')
-            output_path = os.path.join(output_dir, output_filename)
-            
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(f"Ämne: {result['anonymized_subject']}\n")
-                f.write(f"Från: {result['from']}\n")
-                f.write(f"Till: {result['to']}\n") 
-                f.write(f"Datum: {result['date']}\n")
-                f.write(f"Originalfil: {result['original_file']}\n")
-                f.write("\n" + "="*50 + "\n")
-                f.write("ANONYMISERAT EMAIL-INNEHÅLL:\n")
-                f.write("="*50 + "\n\n")
-                f.write(result['anonymized_body'])
-            
-            report_filename = os.path.basename(email_file).replace('.eml', '_analys.json')
-            report_path = os.path.join(output_dir, report_filename)
-            
-            with open(report_path, 'w') as f:
-                json.dump(result['pii_found'], f, indent=2, ensure_ascii=False)
-            
-            print(f"✓ Sparad: {output_filename}")
+        if not files:
+            print(f"📁 No email files found in '{folder}/' folder")
+            print(f"   Supported formats: .eml, .txt, .msg")
+            print(f"   Add some email files and run again")
+            return
         
-        time.sleep(0.1)
+        print(f"📧 Found {len(files)} email files to process...")
+        print()
+        
+        total_entities_found = 0
+        
+        for filepath in files:
+            filename = os.path.basename(filepath)
+            print(f"   Processing: {filename}")
+            
+            result = self.process_email_file(filepath)
+            if result:
+                # Save anonymized version
+                base_name = os.path.splitext(filename)[0]
+                output_name = f"{base_name}_anonymized.txt"
+                output_path = f"output/{output_name}"
+                
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    f.write(f"ANONYMISERAD EMAIL\n")
+                    f.write(f"Originalfil: {filename}\n")
+                    f.write(f"Bearbetad: {result['total_entities']} entiteter anonymiserade\n")
+                    f.write(f"{'='*50}\n\n")
+                    
+                    f.write(f"Ämne: {result['anonymized_subject']}\n")
+                    for header, value in result['headers'].items():
+                        if header not in ['Subject']:
+                            f.write(f"{header}: {value}\n")
+                    
+                    f.write(f"\n{'='*50}\n")
+                    f.write("INNEHÅLL:\n")
+                    f.write(f"{'='*50}\n\n")
+                    f.write(result['anonymized_body'])
+                    
+                    # Add summary of what was anonymized
+                    f.write(f"\n\n{'='*50}\n")
+                    f.write("ANONYMISERINGSRAPPORT:\n")
+                    f.write(f"{'='*50}\n")
+                    
+                    all_entities = result['entities_replaced']['subject'] + result['entities_replaced']['body']
+                    if all_entities:
+                        f.write("Följande information anonymiserades:\n\n")
+                        for entity in all_entities:
+                            f.write(f"- {entity['type']}: '{entity['original']}' → '{entity['replacement']}' (konfidens: {entity['confidence']:.2f})\n")
+                    else:
+                        f.write("Ingen personlig information hittades att anonymisera.\n")
+                
+                total_entities_found += result['total_entities']
+                print(f"     ✅ Saved: {output_name} ({result['total_entities']} entities anonymized)")
+            else:
+                print(f"     ❌ Failed to process {filename}")
+        
+        print()
+        print(f"🎉 Processing complete!")
+        print(f"   📁 Results saved in 'output/' folder")
+        print(f"   🔒 Total entities anonymized: {total_entities_found}")
+        print(f"   📊 Average per file: {total_entities_found/len(files):.1f}")
 
 if __name__ == "__main__":
-    print("Väntar på att Presidio-tjänsterna ska starta...")
-    time.sleep(10)
+    print("🇸🇪 SVENSK EMAIL-ANONYMISERING")
+    print("Använder KBLab BERT för svensk NER")
+    print("=" * 50)
+    print()
     
-    print("Startar email-bearbetning med svenska modeller...")
-    process_all_emails()
-    print("Email-bearbetning klar!")
+    try:
+        anonymizer = SwedishEmailAnonymizer()
+        anonymizer.process_folder()
+    except KeyboardInterrupt:
+        print("\n\n⚠️  Process interrupted by user")
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        print("Check that you have internet connection for first-time model download")
 EOF
 
-# Create Swedish model configuration
-cat > swedish_nlp_config.yml << 'EOF'
-nlp_engine_name: transformers
-models:
-  - lang_code: sv
-    model_name: 
-      spacy: sv_core_news_sm
-      transformers: KB/bert-base-swedish-cased-ner
-    ner_model_configuration:
-      labels_to_ignore:
-        - O
-      aggregation_strategy: max
-      stride: 16
-      alignment_mode: expand
-      model_to_presidio_entity_mapping:
-        PRS: PERSON
-        LOC: LOCATION  
-        ORG: ORGANIZATION
-        TME: DATE_TIME
-        EVN: EVENT
-      low_confidence_score_multiplier: 0.4
-      low_score_entity_names:
-        - EVENT
-EOF
-
-# Create Swedish test email
-cat > emails/test_svenska.eml << 'EOF'
-From: erik.andersson@kommun.se
+# Create example Swedish email
+mkdir emails
+cat > emails/test_kommun.eml << 'EOF'
+From: erik.andersson@stockholms.kommun.se
 To: anna.larsson@example.se
-Subject: Skattebeslut för Storgatan 15
+Subject: Skattebeslut för fastigheten Storgatan 15, Stockholm
 Date: Mon, 1 Jun 2024 10:00:00 +0000
 
 Hej Anna Larsson,
 
 Din skattebedömning för fastigheten på Storgatan 15 (personnummer: 19850615-1234) 
-har slutförts. Vänligen kontakta oss på 08-123 456 78 för eventuella frågor.
+har slutförts av Stockholms kommun.
 
-Bedömningsbeloppet är 25 000 kronor för fastigheten belägen på:
-Storgatan 15
-Stockholm, 11122
+Vänligen kontakta oss på telefon 08-123 456 78 eller besök vårt kontor på 
+Stadshuset, Hantverkargatan 1, 11152 Stockholm för eventuella frågor.
+
+Bedömningsbelopp: 25 000 kronor för taxeringsåret 2024
+Fastighetsadress: Storgatan 15, 11122 Stockholm
+Fastighetsbeteckning: Stockholm Södermalm 1:234
+
+Kontaktuppgifter:
+Erik Andersson
+Skattebedömningsavdelningen  
+Stockholms Kommun
+Telefon: 08-987 654 32
+E-post: erik.andersson@stockholms.kommun.se
+
+Överklagan kan göras till Förvaltningsrätten inom 30 dagar.
 
 Med vänliga hälsningar,
 Erik Andersson
-Skattebedömningsavdelningen
-Stockholms Kommun
-Telefon: 08-987 654 32
-E-post: erik.andersson@kommun.se
+Handläggare
 EOF
 
-# Create custom Dockerfile with Swedish models
-cat > Dockerfile << 'EOF'
-FROM python:3.9-slim
-
-WORKDIR /app
-
-# Install required packages
-RUN pip install requests python-multipart transformers torch
-
-# Copy processing script and config
-COPY email_processor.py .
-COPY requirements.txt .
-COPY swedish_nlp_config.yml .
-
-RUN pip install -r requirements.txt
-
-# Pre-download Swedish models to speed up runtime
-RUN python -c "from transformers import AutoTokenizer, AutoModel; AutoTokenizer.from_pretrained('KB/bert-base-swedish-cased-ner'); AutoModel.from_pretrained('KB/bert-base-swedish-cased-ner')"
-
-CMD ["python", "email_processor.py"]
-EOF
-
-# Update requirements for Swedish models
+# Create requirements.txt
 cat > requirements.txt << 'EOF'
-requests
-python-multipart
-email-validator
-transformers
-torch
+torch>=1.9.0
+transformers>=4.20.0
+tokenizers>=0.12.0
 EOF
 
-# Standard docker-compose.yml (same as before)
-cat > docker-compose.yml << 'EOF'
-version: '3.8'
-
-services:
-  presidio-analyzer:
-    image: mcr.microsoft.com/presidio-analyzer:latest
-    ports:
-      - "5001:3000"
-    environment:
-      - PORT=3000
-    volumes:
-      - ./emails:/app/emails
-      - ./output:/app/output
-      - ./swedish_nlp_config.yml:/app/config.yml
-
-  presidio-anonymizer:
-    image: mcr.microsoft.com/presidio-anonymizer:latest
-    ports:
-      - "5002:3000"
-    environment:
-      - PORT=3000
-    volumes:
-      - ./emails:/app/emails
-      - ./output:/app/output
-
-  email-processor:
-    build: .
-    depends_on:
-      - presidio-analyzer
-      - presidio-anonymizer
-    volumes:
-      - ./emails:/app/emails
-      - ./output:/app/output
-    environment:
-      - ANALYZER_URL=http://presidio-analyzer:3000
-      - ANONYMIZER_URL=http://presidio-anonymizer:3000
-EOF
-
-# Create startup script
-cat > start.sh << 'EOF'
+# Create activation script
+cat > activate.sh << 'EOF'
 #!/bin/bash
-echo "Startar Presidio Email Anonymization System med Svenska Modeller..."
-echo "=================================================================="
-
-docker-compose up -d presidio-analyzer presidio-anonymizer
-
-echo "Väntar på att tjänsterna ska vara redo..."
-sleep 20
-
-echo "Tjänster startade! Du kan nu:"
-echo "1. Lägg svenska email-filer (.eml, .msg, .txt) i 'emails/' mappen"
-echo "2. Kör: docker-compose up email-processor"
-echo "3. Kontrollera resultat i 'output/' mappen"
+echo "🇸🇪 Aktiverar svensk email-anonymiseringsmiljö..."
+source ../swedish-anonymizer-env/bin/activate
+echo "✅ Virtual environment aktiverat!"
 echo ""
-echo "För att testa med det svenska exemplet: docker-compose up email-processor"
-echo "För att stoppa alla tjänster: docker-compose down"
+echo "Kör: python swedish_anonymizer.py"
 EOF
 
-chmod +x start.sh
+chmod +x activate.sh
 
-echo "✅ Svensk Presidio email-anonymiseringssetup skapad!"
+echo "✅ Complete Swedish email anonymizer setup created!"
 echo ""
-echo "📁 Katalogstruktur:"
-echo "   presidio-swedish-setup/"
-echo "   ├── emails/test_svenska.eml (svenska exempel-email)"
-echo "   ├── output/ (resultat visas här)"
-echo "   ├── swedish_nlp_config.yml (svensk modellkonfiguration)"
-echo "   ├── docker-compose.yml"
-echo "   ├── Dockerfile (med svenska modeller)"
-echo "   ├── email_processor.py"
-echo "   └── start.sh"
+echo "📁 Structure:"
+echo "   swedish-anonymizer-env/    (virtual environment)"
+echo "   swedish-email-anonymizer/  (project folder)"
+echo "   ├── emails/test_kommun.eml (example Swedish email)"
+echo "   ├── output/                (results will appear here)"
+echo "   ├── swedish_anonymizer.py  (main script)"
+echo "   ├── requirements.txt"
+echo "   └── activate.sh"
 echo ""
-echo "🚀 För att komma igång:"
-echo "   1. ./start.sh"
-echo "   2. docker-compose up email-processor"
-echo "   3. Kontrollera output/ mappen för resultat"
+echo "🚀 To run:"
+echo "   cd swedish-email-anonymizer"
+echo "   python swedish_anonymizer.py"
 echo ""
-echo "🇸🇪 Använder KB/bert-base-swedish-cased-ner för svensk PII-detektering"
+echo "💡 Tips:"
+echo "   • Model downloads ~1.3GB on first run"
+echo "   • Add your .eml/.txt files to emails/ folder"
+echo "   • Check output/ folder for anonymized results"
+echo "   • Use ./activate.sh to reactivate environment later"
