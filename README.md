@@ -1,25 +1,27 @@
-A Docker-based solution for anonymizing emails and documents containing personally identifiable information (PII), specifically designed for municipal data requests and GDPR compliance.
+Vad Som Anonymiseras
+TypExempelBlirPersonnummer19850615-1234<PERSONNUMMER>Telefon+4631-3678431, 031-36 78 361<TELEFON>Emailerik@kommun.se<EPOST>NamnErik Andersson<FÖRNAMN> <EFTERNAMN>AdresserStorgatan 15, 403 31 Göteborg<GATUADRESS>, <POSTNUMMER> <PLATS>OrganisationerStockholms Kommun<ORGANISATION>
+Filformat
 
-## Overview
+✅ EML (standard email)
+✅ TXT (text-emails)
+✅ MSG (Outlook-filer)
 
-This tool uses Microsoft Presidio to automatically detect and anonymize sensitive information in emails including:
-- Names and personal identifiers
-- Email addresses and phone numbers
-- Social Security Numbers
-- Addresses and locations
-- Custom municipal-specific patterns
+Resultat
 
-## Features
+Anonymiserade emails: output/filnamn_FINAL_anonymized.txt
+Detaljerad rapport: Visar exakt vad som anonymiserats
+Svensk encoding: Hanterar åäö automatiskt
 
-- **Automated PII Detection**: Uses advanced NLP to identify sensitive information
-- **Batch Processing**: Handle multiple email files simultaneously  
-- **Multiple Formats**: Supports .eml, .msg, and .txt files
-- **Audit Trail**: Generates detailed reports of what was anonymized
-- **Docker-based**: Easy deployment and consistent environment
-- **Municipal-ready**: Designed for government transparency requirements
+Teknisk Info
 
-## Quick Start
+AI-Modell: KBLab Swedish BERT NER
+Multi-pass: BERT + Regex + Post-processing
+Systemkrav: Python 3.8+, 4GB RAM
+Säkerhet: Offline processing, GDPR-kompatibel
 
-### Prerequisites
-- Docker and Docker Compose installed
-- Email files to anonymize
+Exempel Körning
+📧 Found 3 email files to process...
+🔒 FINAL MODE: Perfekt anonymisering med multi-pass telefonnummer-detektering
+   Processing: kommun_email.eml
+     ✅ FINAL: kommun_email_FINAL_anonymized.txt (23 entities)
+🔒 FINAL PERFEKT ANONYMISERING KLAR!
