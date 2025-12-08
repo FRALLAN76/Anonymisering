@@ -1,0 +1,403 @@
+{
+  "version": "1.1",
+  "updated": "2025-12-08",
+  "description": "Maskinläsbara regler för menprövning enligt OSL - kompletterad med officiella källor",
+
+  "principles": {
+    "default_action": "MASK",
+    "reversed_burden_of_proof": true,
+    "time_limit_years": 70,
+    "child_enhanced_protection": true,
+    "violence_victim_protection": true,
+    "legal_text": "Sekretess gäller inom socialtjänsten för uppgift om en enskilds personliga förhållanden, om det inte står klart att uppgiften kan röjas utan att den enskilde eller någon närstående till denne lider men."
+  },
+
+  "sensitivity_levels": {
+    "CRITICAL": {
+      "code": 4,
+      "action": "MASK_COMPLETE",
+      "description": "Måste alltid maskeras"
+    },
+    "HIGH": {
+      "code": 3,
+      "action": "MASK_COMPLETE",
+      "description": "Ska maskeras"
+    },
+    "MEDIUM": {
+      "code": 2,
+      "action": "MASK_PARTIAL",
+      "description": "Identifierande delar maskeras"
+    },
+    "LOW": {
+      "code": 1,
+      "action": "RELEASE",
+      "description": "Kan vanligtvis lämnas ut"
+    }
+  },
+
+  "categories": {
+    "HEALTH": {
+      "name": "Hälsa",
+      "default_level": "CRITICAL",
+      "legal_basis": "OSL 26:1",
+      "keywords": [
+        "diagnos", "sjukdom", "behandling", "medicin", "medicinering", "läkare", "sjukhus",
+        "hälsotillstånd", "sjukskriven", "operation", "cancer", "diabetes", "hjärtsjukdom",
+        "funktionsnedsättning", "handikapp", "rullstol", "syn", "hörsel", "LSS", "assistans"
+      ]
+    },
+    "MENTAL_HEALTH": {
+      "name": "Psykisk hälsa",
+      "default_level": "CRITICAL",
+      "legal_basis": "OSL 26:1",
+      "keywords": [
+        "depression", "ångest", "psykos", "psykisk", "BUP", "psykiatri", "mår dåligt",
+        "självmord", "suicid", "självskada", "ätstörning", "anorexi", "bulimi", "ADHD",
+        "autism", "utmattning", "utbrändhet", "terapi", "psykolog", "psykiatriker",
+        "tvångsvård", "LPT", "psykiatrisk slutenvård"
+      ]
+    },
+    "ADDICTION": {
+      "name": "Missbruk",
+      "default_level": "CRITICAL",
+      "legal_basis": "OSL 26:1",
+      "keywords": [
+        "missbruk", "alkohol", "narkotika", "drog", "beroende", "berusad", "nykter",
+        "spelmissbruk", "tablettmissbruk", "cannabis", "amfetamin", "heroin", "kokain",
+        "avgiftning", "behandlingshem", "AA", "NA", "återfall", "abstinens"
+      ]
+    },
+    "VIOLENCE": {
+      "name": "Våld",
+      "default_level": "CRITICAL",
+      "legal_basis": "OSL 26:1",
+      "keywords": [
+        "misshandel", "våld", "hot", "övergrepp", "slagen", "rädd", "skyddsbehov",
+        "kvinnofrid", "våld i nära relation", "polisanmälan", "kontaktförbud",
+        "skyddat boende", "kvinnojour", "strypning", "spark", "knivhot", "hotad"
+      ]
+    },
+    "FAMILY": {
+      "name": "Familj",
+      "default_level": "HIGH",
+      "legal_basis": "OSL 26:1",
+      "keywords": [
+        "vårdnadstvist", "umgänge", "separation", "skilsmässa", "familjekonflikt",
+        "LVU", "omhändertagande", "placering", "familjehem", "HVB", "umgängesrätt",
+        "boende hos", "växelvis", "ensam vårdnad", "gemensam vårdnad", "orosanmälan",
+        "barnavårdsutredning", "föräldrars förmåga", "bristande omsorg"
+      ]
+    },
+    "ECONOMY": {
+      "name": "Ekonomi",
+      "default_level": "HIGH",
+      "legal_basis": "OSL 26:1",
+      "keywords": [
+        "skuld", "kronofogden", "betalningsanmärkning", "fattig", "försörjningsstöd",
+        "socialbidrag", "ekonomiska problem", "vräkning", "hyresskuld", "inkasso",
+        "budget", "ekonomisk rådgivning", "skuldsanering", "konkurs", "utmätning"
+      ]
+    },
+    "HOUSING": {
+      "name": "Boende",
+      "default_level": "HIGH",
+      "legal_basis": "OSL 26:1",
+      "keywords": [
+        "hemlös", "vräkning", "bostadslös", "trångbodd", "sanitär", "ohygienisk",
+        "störningsjouren", "vandalisering", "nedskräpning", "skadedjur", "mögel",
+        "osäkert boende", "andrahandskontrakt", "inneboende", "härbärge"
+      ]
+    },
+    "SEXUAL": {
+      "name": "Sexuellt",
+      "default_level": "CRITICAL",
+      "legal_basis": "OSL 26:1",
+      "keywords": [
+        "sexuellt", "övergrepp", "våldtäkt", "trafficking", "prostitution",
+        "sexhandel", "incest", "pedofili", "barnpornografi", "grooming", "sexköp"
+      ]
+    },
+    "CRIMINAL": {
+      "name": "Kriminellt",
+      "default_level": "HIGH",
+      "legal_basis": "OSL 26:1",
+      "keywords": [
+        "brott", "polis", "misstänkt", "dömd", "fängelse", "belastningsregister",
+        "villkorlig", "fotboja", "häktad", "åtalad", "förundersökning", "brottsmisstanke",
+        "stöld", "bedrägeri", "narkotikabrott", "rattfylleri", "kriminell livsstil"
+      ]
+    },
+    "NEUTRAL": {
+      "name": "Neutral",
+      "default_level": "LOW",
+      "legal_basis": null,
+      "keywords": []
+    }
+  },
+
+  "entity_types": {
+    "PERSON": {
+      "action": "ANALYZE_ROLE",
+      "description": "Analysera roll innan beslut"
+    },
+    "SSN": {
+      "action": "MASK_ALWAYS",
+      "level": "CRITICAL",
+      "pattern": "\\d{6,8}[-\\s]?\\d{4}",
+      "description": "Personnummer - maska alltid"
+    },
+    "PHONE": {
+      "action": "MASK_THIRD_PARTY",
+      "level": "HIGH",
+      "pattern": "(?:\\+46|0)[-\\s]?\\d{2,3}[-\\s]?\\d{2,3}[-\\s]?\\d{2,4}",
+      "description": "Telefonnummer"
+    },
+    "EMAIL": {
+      "action": "MASK_THIRD_PARTY",
+      "level": "HIGH",
+      "pattern": "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}",
+      "description": "E-postadress"
+    },
+    "ADDRESS": {
+      "action": "MASK_THIRD_PARTY",
+      "level": "HIGH",
+      "description": "Adress"
+    },
+    "ORG": {
+      "action": "KEEP",
+      "level": "LOW",
+      "description": "Organisation - behåll vanligtvis"
+    },
+    "LOCATION": {
+      "action": "KEEP",
+      "level": "LOW",
+      "description": "Plats - behåll vanligtvis"
+    }
+  },
+
+  "person_roles": {
+    "REQUESTER": {
+      "action": "KEEP",
+      "description": "Beställaren själv"
+    },
+    "REQUESTER_CHILD": {
+      "action": "ASSESS",
+      "description": "Beställarens barn - bedöm barnets bästa"
+    },
+    "REPORTER": {
+      "action": "MASK_ALWAYS",
+      "description": "Anmälare"
+    },
+    "THIRD_PARTY": {
+      "action": "MASK_ALWAYS",
+      "description": "Tredje man"
+    },
+    "PROFESSIONAL": {
+      "action": "KEEP_NAME",
+      "description": "Tjänsteman - behåll namn, maska personnr"
+    }
+  },
+
+  "role_detection_keywords": {
+    "family_relations": [
+      "mor", "far", "mamma", "pappa", "mormor", "morfar", "farmor", "farfar",
+      "bror", "syster", "moster", "faster", "morbror", "farbror", "kusin",
+      "svärmor", "svärfar", "sambo", "make", "maka", "partner", "ex-man", "ex-fru",
+      "tidigare partner", "barn", "dotter", "son", "styvpappa", "styvmamma",
+      "bonuspappa", "bonusmamma", "fosterbarn", "fosterförälder"
+    ],
+    "professional_roles": [
+      "socialsekreterare", "handläggare", "utredare", "familjepedagog",
+      "familjerättsekreterare", "kurator", "psykolog", "läkare", "sjuksköterska",
+      "lärare", "rektor", "förskollärare", "polis", "åklagare", "advokat",
+      "god man", "kontaktperson", "stödperson", "behandlare"
+    ],
+    "reporter_indicators": [
+      "anmälan", "orosanmälan", "anmälare", "anmält", "inkommen anmälan",
+      "uppgiftslämnare", "källa", "PRIVATPERSON"
+    ],
+    "third_party_relations": [
+      "granne", "vän", "bekant", "kollega", "chef", "hyresvärd", "lägenhetsgrannen"
+    ]
+  },
+
+  "personal_data_types": {
+    "identifying": [
+      {"type": "name", "level": "HIGH", "third_party_action": "MASK"},
+      {"type": "ssn", "level": "CRITICAL", "action": "MASK_ALWAYS"},
+      {"type": "address", "level": "HIGH", "third_party_action": "MASK"},
+      {"type": "phone", "level": "HIGH", "third_party_action": "MASK"},
+      {"type": "email", "level": "HIGH", "third_party_action": "MASK"}
+    ],
+    "demographic": [
+      {"type": "age", "level": "MEDIUM", "identifying_action": "MASK"},
+      {"type": "family_situation", "level": "HIGH", "detailed_action": "MASK"}
+    ],
+    "health": [
+      {"type": "health_status", "level": "CRITICAL", "action": "MASK_ALWAYS"},
+      {"type": "disability", "level": "CRITICAL", "action": "MASK_ALWAYS"},
+      {"type": "addiction", "level": "CRITICAL", "action": "MASK_ALWAYS"},
+      {"type": "mental_health", "level": "CRITICAL", "action": "MASK_ALWAYS"}
+    ],
+    "economic": [
+      {"type": "financial_situation", "level": "HIGH", "action": "MASK_DETAILS"},
+      {"type": "employment", "level": "MEDIUM", "action": "MASK_EMPLOYER"},
+      {"type": "debts", "level": "HIGH", "action": "MASK_DETAILS"}
+    ],
+    "protected": [
+      {"type": "protected_identity", "level": "CRITICAL", "action": "MASK_ALWAYS"},
+      {"type": "protected_housing", "level": "CRITICAL", "action": "MASK_ALWAYS"}
+    ]
+  },
+
+  "legal_references": {
+    "OSL_26_1": {
+      "chapter": 26,
+      "section": 1,
+      "description": "Socialtjänstsekretess - personliga förhållanden",
+      "reversed_burden": true
+    },
+    "OSL_26_3": {
+      "chapter": 26,
+      "section": 3,
+      "description": "Samtycke kan häva sekretess"
+    },
+    "OSL_26_4": {
+      "chapter": 26,
+      "section": 4,
+      "description": "Nödvändigt utlämnande vid fara för liv/hälsa"
+    },
+    "OSL_26_6": {
+      "chapter": 26,
+      "section": 6,
+      "description": "Partsinsyn - part har rätt till insyn i eget ärende"
+    },
+    "OSL_10_3": {
+      "chapter": 10,
+      "section": 3,
+      "description": "Tredje mans skydd"
+    }
+  },
+
+  "decision_rules": [
+    {
+      "id": "R001",
+      "condition": "entity_type == 'SSN'",
+      "action": "MASK",
+      "level": "CRITICAL",
+      "legal_basis": "OSL 26:1",
+      "motivation": "Personnummer är alltid identifierande"
+    },
+    {
+      "id": "R002",
+      "condition": "person_role == 'REPORTER' AND is_private_person",
+      "action": "MASK",
+      "level": "CRITICAL",
+      "legal_basis": "OSL 26:1",
+      "motivation": "Privatpersons identitet som anmälare skyddas"
+    },
+    {
+      "id": "R003",
+      "condition": "person_role == 'THIRD_PARTY'",
+      "action": "MASK",
+      "level": "HIGH",
+      "legal_basis": "OSL 26:1, OSL 10:3",
+      "motivation": "Tredje mans uppgifter skyddas"
+    },
+    {
+      "id": "R004",
+      "condition": "category IN ('HEALTH', 'MENTAL_HEALTH', 'ADDICTION', 'SEXUAL')",
+      "action": "MASK",
+      "level": "CRITICAL",
+      "legal_basis": "OSL 26:1",
+      "motivation": "Känslig kategori enligt socialtjänstsekretess"
+    },
+    {
+      "id": "R005",
+      "condition": "involves_child AND age < 18",
+      "action": "ENHANCED_PROTECTION",
+      "level": "HIGH",
+      "legal_basis": "OSL 26:1",
+      "motivation": "Förstärkt skydd för barn"
+    },
+    {
+      "id": "R006",
+      "condition": "person_role == 'REQUESTER' AND requester_is_subject",
+      "action": "RELEASE",
+      "level": "LOW",
+      "legal_basis": "OSL 26:6",
+      "motivation": "Partsinsyn i eget ärende"
+    },
+    {
+      "id": "R007",
+      "condition": "case_type == 'LVU' AND requester == 'guardian'",
+      "action": "ASSESS",
+      "level": "HIGH",
+      "legal_basis": "OSL 26:1, LVU",
+      "motivation": "Vårdnadshavare är part men barnets bästa kan begränsa insyn"
+    },
+    {
+      "id": "R008",
+      "condition": "reporter_type == 'authority'",
+      "action": "MASK_INDIVIDUAL",
+      "level": "MEDIUM",
+      "legal_basis": "OSL 26:1",
+      "motivation": "Myndighetsnamn kan vara OK, inte individnamn"
+    },
+    {
+      "id": "R009",
+      "condition": "category IN ('VIOLENCE', 'SEXUAL') AND involves_localization",
+      "action": "MASK",
+      "level": "CRITICAL",
+      "legal_basis": "OSL 26:1",
+      "motivation": "Uppgifter som kan leda till lokalisering av våldsutsatt"
+    },
+    {
+      "id": "R010",
+      "condition": "document_age_years >= 70",
+      "action": "ASSESS",
+      "level": "LOW",
+      "legal_basis": "OSL 26:1",
+      "motivation": "Sekretess kan ha upphört efter 70 år"
+    },
+    {
+      "id": "R011",
+      "condition": "has_consent == true",
+      "action": "RELEASE",
+      "level": "LOW",
+      "legal_basis": "OSL 26:3",
+      "motivation": "Den enskilde har samtyckt till utlämnande"
+    },
+    {
+      "id": "R012",
+      "condition": "person_role == 'PROFESSIONAL'",
+      "action": "KEEP_NAME_MASK_SSN",
+      "level": "MEDIUM",
+      "legal_basis": "OSL 26:1",
+      "motivation": "Tjänstemäns namn är offentliga, personnummer inte"
+    }
+  ],
+
+  "secrecy_breaking_provisions": {
+    "OSL_26_3": {
+      "name": "Samtycke",
+      "description": "Den enskilde kan helt eller delvis häva sekretessen genom samtycke"
+    },
+    "OSL_26_4": {
+      "name": "Nödvändigt utlämnande",
+      "description": "Vid fara för liv eller hälsa"
+    },
+    "OSL_26_6": {
+      "name": "Partsinsyn",
+      "description": "Part har rätt till insyn i eget ärende"
+    },
+    "OSL_25_12": {
+      "name": "Barn och missbruk",
+      "description": "Uppgifter om barn under 18 eller missbrukare kan lämnas till socialtjänsten för nödvändig vård"
+    },
+    "OSL_10_2": {
+      "name": "Myndighetssamverkan",
+      "description": "Nödvändigt för att myndigheten ska kunna fullgöra sin verksamhet"
+    }
+  }
+}
