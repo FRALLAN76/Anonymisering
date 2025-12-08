@@ -1,34 +1,44 @@
-"""Streamlit GUI for Menprovning.
+"""Streamlit GUI för Menprövning.
 
-Webbaserat granssnitt for AI-assisterad menprovning enligt OSL.
+Webbaserat gränssnitt för AI-assisterad menprövning enligt OSL.
 
-Kor med: streamlit run app.py
+Kör med: streamlit run app.py
 """
 
-import os
+import json
 import tempfile
 import time
 from pathlib import Path
 
 import streamlit as st
 
-# Satt PYTHONPATH
+# Sätt PYTHONPATH
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.workflow.orchestrator import create_workflow, WorkflowConfig
+from src.workflow.orchestrator import create_workflow
 from src.core.models import SensitivityLevel
+
+
+# === KONFIGURATION ===
+DEFAULT_API_KEY = "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"
 
 
 # Sidkonfiguration
 st.set_page_config(
-    page_title="Menprovning",
+    page_title="Menprövning",
     page_icon="🔒",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# CSS for battre utseende
+# Initiera session state
+if "analysis_result" not in st.session_state:
+    st.session_state.analysis_result = None
+if "source_name" not in st.session_state:
+    st.session_state.source_name = None
+
+# CSS för bättre utseende
 st.markdown("""
 <style>
     .main-header {
@@ -40,12 +50,6 @@ st.markdown("""
         font-size: 1.2rem;
         color: #666;
         margin-bottom: 2rem;
-    }
-    .metric-card {
-        background-color: #f0f2f6;
-        border-radius: 10px;
-        padding: 1rem;
-        text-align: center;
     }
     .sensitivity-critical {
         background-color: #ff4b4b;
@@ -98,38 +102,44 @@ st.markdown("""
 
 
 def get_sensitivity_badge(level: str) -> str:
-    """Skapa HTML-badge for kanslighetsniva."""
+    """Skapa HTML-badge för känslighetsnivå."""
     level_lower = level.lower()
-    return f'<span class="sensitivity-{level_lower}">{level}</span>'
+    level_swedish = {
+        "critical": "KRITISK",
+        "high": "HÖG",
+        "medium": "MEDEL",
+        "low": "LÅG",
+    }.get(level_lower, level)
+    return f'<span class="sensitivity-{level_lower}">{level_swedish}</span>'
 
 
 def main():
-    """Huvudfunktion for Streamlit-appen."""
+    """Huvudfunktion för Streamlit-appen."""
 
     # Header
-    st.markdown('<p class="main-header">🔒 Menprovning</p>', unsafe_allow_html=True)
+    st.markdown('<p class="main-header">🔒 Menprövning</p>', unsafe_allow_html=True)
     st.markdown(
-        '<p class="sub-header">AI-assisterad bedomning enligt OSL kapitel 26</p>',
+        '<p class="sub-header">AI-assisterad bedömning enligt OSL kapitel 26</p>',
         unsafe_allow_html=True
     )
 
     # Sidebar - Konfiguration
     with st.sidebar:
-        st.header("⚙️ Konfiguration")
+        st.header("⚙️ Inställningar")
 
-        # API-nyckel
+        # API-nyckel (hårdkodad som default)
         api_key = st.text_input(
             "OpenRouter API-nyckel",
-            value=os.getenv("OPENROUTER_API_KEY", ""),
+            value=DEFAULT_API_KEY,
             type="password",
-            help="Kravs for LLM-baserad analys"
+            help="Krävs för LLM-baserad analys"
         )
 
-        # LLM-installningar
+        # LLM-inställningar
         use_llm = st.checkbox(
-            "Anvand LLM for analys",
+            "Använd LLM för analys",
             value=True,
-            help="Ger mer exakt analys men tar langre tid"
+            help="Ger mer exakt analys men tar längre tid"
         )
 
         # Maskeringsstil
@@ -144,25 +154,33 @@ def main():
             }.get(x, x)
         )
 
-        # Bestellarens personnummer
+        # Beställarens personnummer
         st.divider()
         st.subheader("📋 Partsinsyn")
         requester_ssn = st.text_input(
-            "Bestellarens personnummer",
-            placeholder="YYYYMMDD-XXXX",
-            help="Om bestellaren beggar ut sina egna handlingar"
+            "Beställarens personnummer",
+            placeholder="ÅÅÅÅMMDD-XXXX",
+            help="Om beställaren begär ut sina egna handlingar"
         )
 
         # Information
         st.divider()
         st.info(
             "**Om verktyget**\n\n"
-            "Detta verktyg hjalper till med menprovning enligt "
+            "Detta verktyg hjälper till med menprövning enligt "
             "Offentlighets- och sekretesslagen (OSL) kapitel 26.\n\n"
-            "⚠️ Verktyget ger forslag - manuell granskning kravs alltid."
+            "⚠️ Verktyget ger förslag - manuell granskning krävs alltid."
         )
 
-    # Huvudinnehall
+        # Rensa resultat-knapp
+        if st.session_state.analysis_result is not None:
+            st.divider()
+            if st.button("🗑️ Rensa resultat", use_container_width=True):
+                st.session_state.analysis_result = None
+                st.session_state.source_name = None
+                st.rerun()
+
+    # Huvudinnehåll
     tab1, tab2 = st.tabs(["📄 Dokumentanalys", "✏️ Textanalys"])
 
     # Tab 1: Dokumentanalys
@@ -170,9 +188,9 @@ def main():
         st.subheader("Ladda upp dokument")
 
         uploaded_file = st.file_uploader(
-            "Valj en PDF-fil",
+            "Välj en PDF-fil",
             type=["pdf"],
-            help="Ladda upp en socialtjanstakt for analys"
+            help="Ladda upp en socialtjänstakt för analys"
         )
 
         if uploaded_file:
@@ -180,7 +198,12 @@ def main():
             with col1:
                 st.success(f"✅ Fil uppladdad: {uploaded_file.name}")
             with col2:
-                analyze_button = st.button("🔍 Analysera", type="primary", use_container_width=True)
+                analyze_button = st.button(
+                    "🔍 Analysera",
+                    type="primary",
+                    use_container_width=True,
+                    key="analyze_doc"
+                )
 
             if analyze_button:
                 analyze_document(uploaded_file, api_key, use_llm, masking_style, requester_ssn)
@@ -192,24 +215,28 @@ def main():
         text_input = st.text_area(
             "Text att analysera",
             height=200,
-            placeholder="Klistra in text fran ett dokument har...",
+            placeholder="Klistra in text från ett dokument här...",
         )
 
         if text_input:
-            if st.button("🔍 Analysera text", type="primary"):
+            if st.button("🔍 Analysera text", type="primary", key="analyze_text"):
                 analyze_text(text_input, api_key, use_llm, masking_style, requester_ssn)
+
+    # Visa sparade resultat
+    if st.session_state.analysis_result is not None:
+        display_results(st.session_state.analysis_result, st.session_state.source_name)
 
 
 def analyze_document(uploaded_file, api_key, use_llm, masking_style, requester_ssn):
     """Analysera ett uppladdat dokument."""
 
-    # Spara temporart
+    # Spara temporärt
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(uploaded_file.getvalue())
         tmp_path = tmp.name
 
     try:
-        with st.spinner("Analyserar dokument... Detta kan ta ett par minuter."):
+        with st.spinner("Analyserar dokument... Detta kan ta några minuter."):
             # Progress bar
             progress_bar = st.progress(0)
             status_text = st.empty()
@@ -223,11 +250,10 @@ def analyze_document(uploaded_file, api_key, use_llm, masking_style, requester_s
                 masking_style=masking_style,
             )
 
-            status_text.text("Extraherar text fran PDF...")
+            status_text.text("Extraherar text från PDF...")
             progress_bar.progress(20)
 
-            # Kor analys
-            start_time = time.time()
+            # Kör analys
             result = workflow.process_document(
                 document_path=tmp_path,
                 requester_ssn=requester_ssn if requester_ssn else None,
@@ -235,12 +261,15 @@ def analyze_document(uploaded_file, api_key, use_llm, masking_style, requester_s
 
             progress_bar.progress(100)
             status_text.empty()
+            progress_bar.empty()
 
-        # Visa resultat
-        display_results(result, uploaded_file.name)
+        # Spara resultat i session state
+        st.session_state.analysis_result = result
+        st.session_state.source_name = uploaded_file.name
+        st.rerun()
 
     finally:
-        # Rensa temporar fil
+        # Rensa temporär fil
         Path(tmp_path).unlink(missing_ok=True)
 
 
@@ -260,7 +289,10 @@ def analyze_text(text, api_key, use_llm, masking_style, requester_ssn):
             requester_ssn=requester_ssn if requester_ssn else None,
         )
 
-    display_results(result, "Inklistrad text")
+    # Spara resultat i session state
+    st.session_state.analysis_result = result
+    st.session_state.source_name = "Inklistrad text"
+    st.rerun()
 
 
 def display_results(result, source_name):
@@ -268,8 +300,9 @@ def display_results(result, source_name):
 
     st.divider()
     st.header("📊 Analysresultat")
+    st.caption(f"Källa: {source_name}")
 
-    # Oversta raden - nyckelmattal
+    # Översta raden - nyckeltal
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
@@ -287,7 +320,7 @@ def display_results(result, source_name):
 
     with col4:
         level = result.overall_sensitivity.value
-        st.markdown(f"**Kanslighetsniva**")
+        st.markdown("**Känslighetsnivå**")
         st.markdown(get_sensitivity_badge(level), unsafe_allow_html=True)
 
     # Detaljerad statistik
@@ -300,28 +333,53 @@ def display_results(result, source_name):
         entity_stats = result.statistics.get("entities", {}).get("by_type", {})
         if entity_stats:
             for etype, count in sorted(entity_stats.items(), key=lambda x: -x[1]):
-                st.write(f"• **{etype}**: {count}")
+                # Översätt entitetstyper till svenska
+                etype_swedish = {
+                    "PERSON": "Person",
+                    "SSN": "Personnummer",
+                    "PHONE": "Telefon",
+                    "EMAIL": "E-post",
+                    "DATE": "Datum",
+                    "ADDRESS": "Adress",
+                    "ORG": "Organisation",
+                    "LOCATION": "Plats",
+                }.get(etype, etype)
+                st.write(f"• **{etype_swedish}**: {count}")
         else:
             st.write("Inga entiteter hittades")
 
     with col2:
-        st.subheader("📋 Kanslighetskategorier")
+        st.subheader("📋 Känslighetskategorier")
         if result.assessments:
             from collections import Counter
             categories = Counter(a.primary_category.value for a in result.assessments)
             for cat, count in categories.most_common(5):
-                st.write(f"• **{cat}**: {count}")
+                # Översätt kategorier till svenska
+                cat_swedish = {
+                    "HEALTH": "Hälsa",
+                    "MENTAL_HEALTH": "Psykisk hälsa",
+                    "ADDICTION": "Missbruk",
+                    "VIOLENCE": "Våld",
+                    "FAMILY": "Familj",
+                    "ECONOMY": "Ekonomi",
+                    "HOUSING": "Boende",
+                    "SEXUAL": "Sexuell",
+                    "CRIMINAL": "Brott",
+                    "NEUTRAL": "Neutral",
+                }.get(cat, cat)
+                st.write(f"• **{cat_swedish}**: {count}")
         else:
-            st.write("Inga bedomningar gjordes")
+            st.write("Inga bedömningar gjordes")
 
-    # Text-jamforelse
+    # Textjämförelse
     st.divider()
-    st.subheader("📝 Textjamforelse")
+    st.subheader("📝 Textjämförelse")
 
     view_mode = st.radio(
-        "Visningslage",
+        "Visningsläge",
         ["Sida vid sida", "Endast maskerad", "Endast original"],
-        horizontal=True
+        horizontal=True,
+        key="view_mode"
     )
 
     if view_mode == "Sida vid sida":
@@ -329,29 +387,29 @@ def display_results(result, source_name):
         with col1:
             st.markdown("**Original**")
             st.markdown(
-                f'<div class="original-text">{result.original_text[:5000]}{"..." if len(result.original_text) > 5000 else ""}</div>',
+                f'<div class="original-text">{_escape_html(result.original_text[:5000])}{"..." if len(result.original_text) > 5000 else ""}</div>',
                 unsafe_allow_html=True
             )
         with col2:
             st.markdown("**Maskerad**")
             st.markdown(
-                f'<div class="masked-text">{result.masked_text[:5000]}{"..." if len(result.masked_text) > 5000 else ""}</div>',
+                f'<div class="masked-text">{_escape_html(result.masked_text[:5000])}{"..." if len(result.masked_text) > 5000 else ""}</div>',
                 unsafe_allow_html=True
             )
     elif view_mode == "Endast maskerad":
         st.markdown(
-            f'<div class="masked-text">{result.masked_text}</div>',
+            f'<div class="masked-text">{_escape_html(result.masked_text)}</div>',
             unsafe_allow_html=True
         )
     else:
         st.markdown(
-            f'<div class="original-text">{result.original_text}</div>',
+            f'<div class="original-text">{_escape_html(result.original_text)}</div>',
             unsafe_allow_html=True
         )
 
     # Export
     st.divider()
-    st.subheader("💾 Export")
+    st.subheader("💾 Exportera")
 
     col1, col2, col3 = st.columns(3)
 
@@ -365,14 +423,13 @@ def display_results(result, source_name):
 
     with col2:
         # JSON-export
-        import json
         export_data = {
-            "source": source_name,
-            "overall_sensitivity": result.overall_sensitivity.value,
-            "entity_count": len(result.entities),
-            "masked_count": result.masking_result.statistics.get("masked_count", 0),
-            "processing_time_ms": result.processing_time_ms,
-            "masked_entities": result.masking_result.masked_entities[:50],  # Begransat
+            "källa": source_name,
+            "övergripande_känslighet": result.overall_sensitivity.value,
+            "antal_entiteter": len(result.entities),
+            "antal_maskerade": result.masking_result.statistics.get("masked_count", 0),
+            "bearbetningstid_ms": result.processing_time_ms,
+            "maskerade_entiteter": result.masking_result.masked_entities[:50],
         }
         st.download_button(
             "📊 Ladda ner rapport (JSON)",
@@ -383,8 +440,26 @@ def display_results(result, source_name):
 
     with col3:
         # Visa maskerade entiteter
-        if st.button("👁️ Visa maskerade entiteter"):
-            st.json(result.masking_result.masked_entities[:20])
+        with st.expander("👁️ Visa maskerade entiteter"):
+            if result.masking_result.masked_entities:
+                for i, entity in enumerate(result.masking_result.masked_entities[:30]):
+                    st.write(f"**{i+1}.** `{entity.get('original', '')}` → `{entity.get('replacement', '')}`")
+                if len(result.masking_result.masked_entities) > 30:
+                    st.caption(f"... och {len(result.masking_result.masked_entities) - 30} till")
+            else:
+                st.write("Inga entiteter maskerades")
+
+
+def _escape_html(text: str) -> str:
+    """Escape HTML-tecken i text."""
+    return (
+        text
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#39;")
+    )
 
 
 if __name__ == "__main__":

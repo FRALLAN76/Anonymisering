@@ -37,14 +37,15 @@ class MaskingConfig:
     anonymize_persons: bool = True  # Anonymisera till Person A, B, etc.
 
     # Standardatgarder per entitetstyp
+    # I socialtjanstkontext: maskera namn, platser kan vara kansliga (stadsdelar)
     default_actions: dict = field(default_factory=lambda: {
         EntityType.SSN: MaskingAction.MASK_COMPLETE,
         EntityType.PHONE: MaskingAction.MASK_COMPLETE,
         EntityType.EMAIL: MaskingAction.MASK_COMPLETE,
-        EntityType.PERSON: MaskingAction.ASSESS,
+        EntityType.PERSON: MaskingAction.MASK_COMPLETE,  # Alla namn maskeras
         EntityType.ADDRESS: MaskingAction.MASK_COMPLETE,
         EntityType.ORGANIZATION: MaskingAction.RELEASE,
-        EntityType.LOCATION: MaskingAction.RELEASE,
+        EntityType.LOCATION: MaskingAction.MASK_COMPLETE,  # Stadsdelar kan vara kansliga
         EntityType.DATE: MaskingAction.RELEASE,
         EntityType.MISC: MaskingAction.ASSESS,
     })
