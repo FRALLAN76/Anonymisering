@@ -21,7 +21,9 @@ from src.core.models import SensitivityLevel
 
 
 # === KONFIGURATION ===
-DEFAULT_API_KEY = "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"
+# OpenRouter API-nyckel (valfritt - för LLM-analys)
+# Skaffa ny på: https://openrouter.ai
+DEFAULT_API_KEY = ""
 
 
 # Sidkonfiguration
@@ -138,8 +140,8 @@ def main():
         # LLM-inställningar
         use_llm = st.checkbox(
             "Använd LLM för analys",
-            value=True,
-            help="Ger mer exakt analys men tar längre tid"
+            value=False,  # Avstängd som default - kräver giltig API-nyckel
+            help="Ger mer exakt analys men kräver API-nyckel och tar längre tid"
         )
 
         # Maskeringsstil
