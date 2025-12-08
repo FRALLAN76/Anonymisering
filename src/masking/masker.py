@@ -174,6 +174,11 @@ class EntityMasker:
         if entity.type == EntityType.SSN:
             return MaskingAction.MASK_COMPLETE
 
+        # Datum maskeras aldrig (mottes-, beslutsdatum ar sallan kansliga)
+        # Foddelsedatum fangas via personnummer
+        if entity.type == EntityType.DATE:
+            return MaskingAction.RELEASE
+
         # Kontrollera roll
         if entity.role:
             if entity.role == PersonRole.REQUESTER:

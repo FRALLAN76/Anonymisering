@@ -36,7 +36,7 @@ class WorkflowConfig:
     llm_model: str = "openai/gpt-4o-mini"
 
     # NER
-    use_bert_ner: bool = False  # BERT ar langsammare, av som standard
+    use_bert_ner: bool = True  # KB-BERT for battre namnigenkanning
 
     # Maskning
     masking_style: str = "brackets"
