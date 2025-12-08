@@ -262,7 +262,12 @@ class MenprovningWorkflow:
                 logger.warning(f"BERT NER misslyckades: {e}")
 
         # Postprocessing
-        return self._postprocessor.process(raw_entities, bert_entities)
+        entities = self._postprocessor.process(raw_entities, bert_entities)
+
+        # Slå samman angränsande personnamn (t.ex. "Anna" + "Andersson" -> "Anna Andersson")
+        entities = self._postprocessor.merge_adjacent_persons(entities)
+
+        return entities
 
     def _analyze_sensitivity(
         self,

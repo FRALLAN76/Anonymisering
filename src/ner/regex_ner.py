@@ -15,6 +15,7 @@ class RegexNERConfig:
     extract_phone: bool = True
     extract_email: bool = True
     extract_dates: bool = True
+    extract_names: bool = True  # Svenska namn via listor
     validate_ssn: bool = True  # Kontrollera Luhn-algoritmen
 
 
@@ -27,6 +28,7 @@ class RegexNER:
     - Telefonnummer
     - E-postadresser
     - Datum
+    - Svenska namn (förnamn + efternamn via listor/mönster)
     """
 
     # Svenska personnummer: YYMMDD-XXXX eller YYYYMMDD-XXXX
@@ -44,24 +46,78 @@ class RegexNER:
         re.compile(r'\b(\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]|[6-9]\d))(\d{4})\b'),
     ]
 
-    # Svenska telefonnummer
+    # Svenska telefonnummer - omfattande mönster
     PHONE_PATTERNS = [
-        # Mobilnummer: 070-123 45 67 (med mellanslag/bindestreck)
+        # === MOBIL ===
+        # 070-123 45 67, 070 123 45 67
         re.compile(r'\b(07\d[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2})\b'),
-        # Mobilnummer: 0701234567 (utan formatering)
+        # 0701234567
         re.compile(r'\b(07\d{8})\b'),
-        # Mobilnummer: 070-1234567
+        # 070-1234567
         re.compile(r'\b(07\d[-\s]?\d{7})\b'),
-        # Fast telefon: 031-123 45 67
-        re.compile(r'\b(0\d{1,2}[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2})\b'),
-        # Fast telefon: 08-123 456
-        re.compile(r'\b(0\d{1,2}[-\s]?\d{3}[-\s]?\d{3})\b'),
-        # Internationellt: +46 70 123 45 67
-        re.compile(r'(\+46[-\s]?\d{1,2}[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2})'),
-        # Format: 0707-720707
+        # +46 70 123 45 67, +4670-1234567
+        re.compile(r'(\+46[-\s]?7\d[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2})'),
+        re.compile(r'(\+46[-\s]?7\d[-\s]?\d{7})'),
+
+        # === STOCKHOLM (08) ===
+        re.compile(r'\b(08[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2})\b'),
+        re.compile(r'\b(08[-\s]?\d{6,8})\b'),
+        re.compile(r'(\+46[-\s]?8[-\s]?\d{6,8})'),
+
+        # === GÖTEBORG (031) ===
+        re.compile(r'\b(031[-\s]?\d{2}[-\s]?\d{2}[-\s]?\d{2,3})\b'),
+        re.compile(r'\b(031[-\s]?\d{6,8})\b'),
+        re.compile(r'(\+46[-\s]?31[-\s]?\d{6,8})'),
+
+        # === MALMÖ (040) ===
+        re.compile(r'\b(040[-\s]?\d{2}[-\s]?\d{2}[-\s]?\d{2})\b'),
+        re.compile(r'\b(040[-\s]?\d{6,8})\b'),
+
+        # === ÖVRIGA RIKTNUMMER ===
+        # 0XX-XXX XX XX (treställigt riktnummer)
+        re.compile(r'\b(0\d{2}[-\s]?\d{2,3}[-\s]?\d{2}[-\s]?\d{2})\b'),
+        # 0X-XXX XX XX (tvåställigt riktnummer)
+        re.compile(r'\b(0\d[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2})\b'),
+        # 0XXX-XXXXXX
         re.compile(r'\b(0\d{3}[-\s]?\d{6})\b'),
-        # Format: XXXX-XXXXXX (som 1234-556789)
+
+        # === INTERNATIONELLT ===
+        re.compile(r'(\+46[-\s]?\d{1,3}[-\s]?\d{6,8})'),
+
+        # === SPECIELLA FORMAT ===
+        # 031-36 78 361 (Göteborg med extra siffra)
+        re.compile(r'\b(\d{3}[-]\d{2}[-\s]?\d{2}[-\s]?\d{2,3})\b'),
+        # XXXX-XXXXXX
         re.compile(r'\b(\d{4}[-]\d{6})\b'),
+    ]
+
+    # Svenska förnamn (vanliga)
+    SWEDISH_FIRST_NAMES = {
+        'Anna', 'Lars', 'Erik', 'Maria', 'Johan', 'Emma', 'Oscar', 'Patrik',
+        'Fredrik', 'Christina', 'Magnus', 'Susanne', 'Anders', 'Helena', 'Per',
+        'Margareta', 'Stefan', 'Birgitta', 'Mikael', 'Elisabeth', 'Jonas', 'Eva',
+        'David', 'Ingrid', 'Daniel', 'Marie', 'Thomas', 'Linda', 'Marcus', 'Karin',
+        'Mattias', 'Sara', 'Andreas', 'Lena', 'Peter', 'Annika', 'Christer',
+        'Monica', 'Martin', 'Inger', 'Robert', 'Åsa', 'Nils', 'Gunilla', 'Kristina',
+        'Ulf', 'Ulrika', 'Carl', 'Björn', 'Sven', 'Astrid', 'Gustav', 'Mats',
+        'Lisa', 'Alexander', 'Jenny', 'Henrik', 'Malin', 'Niklas', 'Elin', 'Jan',
+        'Kerstin', 'Håkan', 'Barbro', 'Bengt', 'Marianne', 'Karl', 'Ingela',
+        'Göran', 'Ann', 'Lennart', 'Carina', 'Leif', 'Camilla', 'Tommy', 'Sofia',
+        'Kenneth', 'Jessica', 'Roger', 'Caroline', 'Tomas', 'Katarina', 'Rolf',
+        'Louise', 'Hans', 'Sandra', 'Claes', 'Rebecca', 'Bo', 'Johanna', 'Arne',
+        'Therese', 'Kjell', 'Victoria', 'Jan-Erik', 'Ann-Christin', 'Per-Olof',
+        'Ann-Marie', 'Karl-Erik', 'Eva-Lena', 'Jan-Olof', 'Ann-Sofie',
+        # Fler moderna namn
+        'William', 'Alice', 'Liam', 'Elsa', 'Noah', 'Maja', 'Lucas', 'Ella',
+        'Oliver', 'Wilma', 'Hugo', 'Ebba', 'Axel', 'Alma', 'Leo', 'Olivia',
+    }
+
+    # Mönster för svenska efternamn
+    SURNAME_PATTERNS = [
+        # -son, -sen, -sson (Andersson, Johansson, etc.)
+        re.compile(r'\b([A-ZÅÄÖ][a-zåäö]+(?:ss?on|sen))\b'),
+        # -berg, -ström, -lund, -dahl, -gren, -qvist, -mark, -vall, -holm
+        re.compile(r'\b([A-ZÅÄÖ][a-zåäö]+(?:berg|ström|lund|dahl|gren|qvist|quist|kvist|mark|vall|holm|blad|bäck|borg|stedt|felt|feldt|ling|löf|löv))\b'),
     ]
 
     # E-postadresser
@@ -115,6 +171,9 @@ class RegexNER:
 
         if self.config.extract_dates:
             entities.extend(self._extract_dates(text))
+
+        if self.config.extract_names:
+            entities.extend(self._extract_names(text))
 
         # Sortera efter position och ta bort överlappande
         entities = self._remove_overlapping(entities)
@@ -291,6 +350,65 @@ class RegexNER:
                     start=match.start(),
                     end=match.end(),
                     confidence=0.95,
+                ))
+
+        return entities
+
+    def _extract_names(self, text: str) -> list[Entity]:
+        """
+        Extrahera svenska namn via förnamnslistor och efternamnsmönster.
+
+        Detta är ett komplement till BERT NER för att fånga vanliga
+        svenska namn som BERT kan missa.
+        """
+        entities = []
+        found_positions: set[tuple[int, int]] = set()
+
+        # Extrahera förnamn från lista
+        for name in self.SWEDISH_FIRST_NAMES:
+            # Case-insensitive sökning men matcha hela ord
+            pattern = re.compile(r'\b' + re.escape(name) + r'\b', re.IGNORECASE)
+            for match in pattern.finditer(text):
+                pos = (match.start(), match.end())
+
+                if any(self._overlaps(pos, existing) for existing in found_positions):
+                    continue
+
+                # Kontrollera att det faktiskt är ett namn (stor bokstav i original)
+                matched_text = match.group()
+                if not matched_text[0].isupper():
+                    continue
+
+                found_positions.add(pos)
+                entities.append(Entity(
+                    text=matched_text,
+                    type=EntityType.PERSON,
+                    start=match.start(),
+                    end=match.end(),
+                    confidence=0.85,  # Något lägre konfidens än BERT
+                ))
+
+        # Extrahera efternamn via mönster
+        for pattern in self.SURNAME_PATTERNS:
+            for match in pattern.finditer(text):
+                pos = (match.start(), match.end())
+
+                if any(self._overlaps(pos, existing) for existing in found_positions):
+                    continue
+
+                surname = match.group(1)
+
+                # Filtrera bort vanliga ord som matchar mönstret
+                if surname.lower() in {'person', 'saken', 'taken', 'broken'}:
+                    continue
+
+                found_positions.add(pos)
+                entities.append(Entity(
+                    text=surname,
+                    type=EntityType.PERSON,
+                    start=match.start(),
+                    end=match.end(),
+                    confidence=0.80,  # Efternamn har lägre konfidens
                 ))
 
         return entities
