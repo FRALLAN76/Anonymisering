@@ -883,6 +883,7 @@ def display_results(result, source_name):
             <html>
             <head>
                 <title>Partsberoenden</title>
+                <!-- Load vis.js from CDN -->
                 <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
                 <style type="text/css">
                     #network {{
@@ -891,69 +892,111 @@ def display_results(result, source_name):
                         border: 1px solid lightgray;
                         border-radius: 5px;
                     }}
+                    /* Ensure container is visible */
+                    body, html {{
+                        margin: 0;
+                        padding: 0;
+                        height: 100%;
+                        overflow: hidden;
+                    }}
                 </style>
             </head>
             <body>
                 <div id="network"></div>
                 <script type="text/javascript">
-                    const nodes = new vis.DataSet({json.dumps(nodes, ensure_ascii=False)});
-                    const edges = new vis.DataSet({json.dumps(edges, ensure_ascii=False)});
+                    // Debug: Log when script starts
+                    console.log("Starting network visualization...");
                     
-                    const container = document.getElementById("network");
-                    const data = {{ nodes: nodes, edges: edges }};
-                    const options = {{
-                        nodes: {{
-                            font: {{
-                                size: 14,
-                                face: "Arial",
+                    try {{
+                        const nodes = new vis.DataSet({json.dumps(nodes, ensure_ascii=False)});
+                        const edges = new vis.DataSet({json.dumps(edges, ensure_ascii=False)});
+                        
+                        console.log("Nodes loaded:", nodes.length);
+                        console.log("Edges loaded:", edges.length);
+                        
+                        const container = document.getElementById("network");
+                        if (!container) {{
+                            console.error("Container element not found!");
+                        }} else {{
+                            console.log("Container found:", container);
+                        }}
+                        
+                        const data = {{ nodes: nodes, edges: edges }};
+                        
+                        // Simplified options for better compatibility
+                        const options = {{
+                            nodes: {{
+                                font: {{ size: 14, face: "Arial" }},
+                                borderWidth: 2,
+                                shadow: true,
                             }},
-                            borderWidth: 2,
-                            shadow: true,
-                        }},
-                        edges: {{
-                            font: {{
-                                size: 12,
-                                align: "middle",
+                            edges: {{
+                                font: {{ size: 12, align: "middle" }},
+                                arrows: {{ to: {{ enabled: true, scaleFactor: 0.5 }} }},
+                                smooth: {{ enabled: true }},
                             }},
-                            arrows: {{
-                                to: {{
-                                    enabled: true,
-                                    scaleFactor: 0.5,
+                            physics: {{
+                                enabled: true,
+                                barnesHut: {{
+                                    gravitationalConstant: -80000,
+                                    centralGravity: 0.3,
+                                    springLength: 200,
+                                    springConstant: 0.04,
+                                    damping: 0.09,
+                                    avoidOverlap: 0.1,
                                 }},
+                                minVelocity: 0.75,
                             }},
-                            smooth: {{
-                                type: "cubicBezier",
-                                forceDirection: "none",
-                            }},
-                        }},
-                        physics: {{
-                            enabled: true,
-                            barnesHut: {{
-                                gravitationalConstant: -80000,
-                                centralGravity: 0.3,
-                                springLength: 200,
-                                springConstant: 0.04,
-                                damping: 0.09,
-                                avoidOverlap: 0.1,
-                            }},
-                            minVelocity: 0.75,
-                        }},
-                        interaction: {{
-                            hover: true,
-                            tooltipDelay: 200,
-                        }},
-                    }};
-                    
-                    const network = new vis.Network(container, data, options);
-                    network.on("click", function(params) {{
-                        params.event = [["original", params.pointer.canvas]]];
-                    }});
+                            interaction: {{ hover: true, tooltipDelay: 200 }},
+                        }};
+                        
+                        // Create network with timeout to ensure DOM is ready
+                        setTimeout(function() {{
+                            const network = new vis.Network(container, data, options);
+                            console.log("Network created:", network);
+                            
+                            network.on("click", function(params) {{
+                                console.log("Network clicked:", params);
+                            }});
+                            
+                            // Fit network to container
+                            network.fit();
+                            network.redraw();
+                        }}, 100);
+                        
+                    }} catch (error) {{
+                        console.error("Error creating network:", error);
+                    }}
                 </script>
             </body>
             </html>
             """
             
+            # Add debug information
+            st.caption(f"🔍 Visualisering av {len(result.parties)} parter med {len(edges)} relationer")
+            
+            # Show fallback message if no edges
+            if len(edges) == 0 and len(result.parties) > 1:
+                st.warning("⚠️ Inga relationer kunde fastställas mellan parterna. Visar ändå nätverksstruktur.")
+            
             components.html(network_html, height=550)
+            
+            # Add troubleshooting help
+            with st.expander("❓ Felsökning av visualisering"):
+                st.markdown("""
+                **Om visualiseringen är tom, prova:**
+                
+                1. **Kontrollera internetanslutning** - vis.js laddas från CDN
+                2. **Öppna browserkonsolen** (F12) för felmeddelanden
+                3. **Uppdatera sidan** - Ibland hjälper det
+                4. **Prova annan webbläsare** - Chrome/Firefox rekommenderas
+                
+                **Teknisk information:**
+                - Noder: {len(nodes)}
+                - Kanter: {len(edges)}
+                - Parter: {len(result.parties)}
+                - Parter med relationer: {sum(1 for p in result.parties if p.relation)}
+                """)
         else:
             st.info("📊 Inga parter identifierades i dokumentet.")
 
