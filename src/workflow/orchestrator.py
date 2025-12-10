@@ -11,15 +11,18 @@ from typing import Optional
 
 from src.core.models import (
     AnalysisResult,
+    DocumentParty,
     Entity,
     ExtractedDocument,
     SensitivityAssessment,
     SensitivityLevel,
+    RequesterType,
 )
 from src.ingestion.pdf_extractor import PDFExtractor
 from src.ner.regex_ner import RegexNER
 from src.ner.postprocessor import EntityPostprocessor
 from src.analysis.sensitivity_analyzer import SensitivityAnalyzer, SensitivityAnalyzerConfig
+from src.analysis.party_analyzer import PartyAnalyzer, PartyAnalyzerConfig
 from src.masking.masker import EntityMasker, MaskingConfig, MaskingResult
 from src.llm.client import LLMConfig
 
@@ -60,6 +63,7 @@ class WorkflowResult:
     overall_sensitivity: SensitivityLevel
     processing_time_ms: float
     statistics: dict = field(default_factory=dict)
+    parties: list[DocumentParty] = field(default_factory=list)  # Identifierade parter
 
 
 class MenprovningWorkflow:
@@ -88,6 +92,7 @@ class MenprovningWorkflow:
         self._postprocessor = EntityPostprocessor()
         self._masker: Optional[EntityMasker] = None
         self._analyzer: Optional[SensitivityAnalyzer] = None
+        self._party_analyzer: Optional[PartyAnalyzer] = None
 
     @property
     def masker(self) -> EntityMasker:
@@ -120,10 +125,26 @@ class MenprovningWorkflow:
             self._analyzer = SensitivityAnalyzer(analyzer_config)
         return self._analyzer
 
+    @property
+    def party_analyzer(self) -> PartyAnalyzer:
+        """Lazy loading av partsanalysator."""
+        if self._party_analyzer is None:
+            llm_config = None
+            if self.config.use_llm and self.config.llm_api_key:
+                llm_config = LLMConfig(
+                    api_key=self.config.llm_api_key,
+                    model=self.config.llm_model,
+                )
+            analyzer_config = PartyAnalyzerConfig(llm_config=llm_config)
+            self._party_analyzer = PartyAnalyzer(analyzer_config)
+        return self._party_analyzer
+
     def process_document(
         self,
         document_path: str,
         requester_ssn: Optional[str] = None,
+        requester_type: Optional[RequesterType] = None,
+        requester_party_id: Optional[str] = None,
     ) -> WorkflowResult:
         """
         Bearbeta ett dokument genom hela pipelinen.
@@ -131,6 +152,8 @@ class MenprovningWorkflow:
         Args:
             document_path: Sokvag till dokumentet
             requester_ssn: Bestellarens personnummer (for partsinsyn)
+            requester_type: Typ av bestallare (SUBJECT_SELF, PARENT_1, etc.)
+            requester_party_id: Part-ID om bestallaren ar identifierad part
 
         Returns:
             WorkflowResult med all information
@@ -148,24 +171,35 @@ class MenprovningWorkflow:
         logger.info("Steg 2: Kor NER...")
         entities = self._run_ner(doc.full_text)
 
-        # 3. Kanslighetsanalys
-        logger.info("Steg 3: Analyserar kanslighet...")
+        # 3. Partsanalys (identifiera alla parter)
+        logger.info("Steg 3: Identifierar parter...")
+        parties = self._analyze_parties(doc.full_text, entities)
+
+        # 4. Kanslighetsanalys
+        logger.info("Steg 4: Analyserar kanslighet...")
         assessments, overall_level = self._analyze_sensitivity(doc.full_text, entities)
 
-        # 4. Identifiera bestellarens entiteter
+        # 5. Identifiera bestallarens entiteter och part
         requester_entities = set()
+        requester_party_id = self._identify_requester_party(
+            requester_ssn, requester_type, requester_party_id, 
+            parties, entities, doc.full_text
+        )
+        
         if requester_ssn:
             requester_entities = self._identify_requester_entities(
                 requester_ssn, entities, doc.full_text
             )
 
-        # 5. Maskning
-        logger.info("Steg 4: Applicerar maskning...")
-        masking_result = self.masker.mask_text(
+        # 6. Maskning med partsinsyn
+        logger.info("Steg 5: Applicerar maskning...")
+        masking_result = self._apply_party_aware_masking(
             doc.full_text,
             entities,
             assessments,
-            requester_entities,
+            requester_type or RequesterType.PUBLIC,
+            requester_party_id,
+            parties,
         )
 
         # Berakna tid
@@ -189,6 +223,7 @@ class MenprovningWorkflow:
             overall_sensitivity=overall_level,
             processing_time_ms=processing_time,
             statistics=statistics,
+            parties=parties,
         )
 
     def process_text(
@@ -196,6 +231,8 @@ class MenprovningWorkflow:
         text: str,
         document_id: str = "unknown",
         requester_ssn: Optional[str] = None,
+        requester_type: Optional[RequesterType] = None,
+        requester_party_id: Optional[str] = None,
     ) -> WorkflowResult:
         """
         Bearbeta text direkt (utan PDF-extraktion).
@@ -204,6 +241,8 @@ class MenprovningWorkflow:
             text: Texten att bearbeta
             document_id: Identifierare
             requester_ssn: Bestellarens personnummer
+            requester_type: Typ av bestallare (SUBJECT_SELF, PARENT_1, etc.)
+            requester_party_id: Part-ID om bestallaren ar identifierad part
 
         Returns:
             WorkflowResult
@@ -214,6 +253,31 @@ class MenprovningWorkflow:
         entities = self._run_ner(text)
 
         # 2. Kanslighetsanalys
+        # 2. Kanslighetsanalys
+        assessments, overall_level = self._analyze_sensitivity(text, entities)
+        # 2. Partsanalys (identifiera alla parter)
+        parties = self._analyze_parties(text, entities)
+        # 3. Kanslighetsanalys
+        # 4. Identifiera beställarens entiteter och part
+        requester_entities = set()
+        requester_party_id = self._identify_requester_party(
+            requester_ssn, requester_type, requester_party_id, 
+            parties, entities, text
+        )
+        
+        if requester_ssn:
+            requester_entities = self._identify_requester_entities(
+                requester_ssn, entities, text
+            )
+        # 5. Maskning med partsinsyn
+        masking_result = self._apply_party_aware_masking(
+            text,
+            entities,
+            assessments,
+            requester_type or RequesterType.PUBLIC,
+            requester_party_id,
+            parties,
+        )
         assessments, overall_level = self._analyze_sensitivity(text, entities)
 
         # 3. Identifiera bestellarens entiteter
@@ -244,6 +308,7 @@ class MenprovningWorkflow:
             overall_sensitivity=overall_level,
             processing_time_ms=processing_time,
             statistics={},
+            parties=parties,
         )
 
     def _run_ner(self, text: str) -> list[Entity]:
@@ -261,8 +326,20 @@ class MenprovningWorkflow:
             except Exception as e:
                 logger.warning(f"BERT NER misslyckades: {e}")
 
-        # Postprocessing
-        entities = self._postprocessor.process(raw_entities, bert_entities)
+        # Postprocessing med LLM-stöd
+        llm_config = None
+        if self.config.use_llm and self.config.llm_api_key:
+            llm_config = LLMConfig(
+                api_key=self.config.llm_api_key,
+                model=self.config.llm_model,
+            )
+
+        entities = self._postprocessor.process(
+            raw_entities, 
+            bert_entities, 
+            text=text, 
+            llm_config=llm_config
+        )
 
         # Slå samman angränsande personnamn (t.ex. "Anna" + "Andersson" -> "Anna Andersson")
         entities = self._postprocessor.merge_adjacent_persons(entities)
@@ -324,6 +401,131 @@ class MenprovningWorkflow:
                 max_level = assessment.level
 
         return max_level
+
+    def _analyze_parties(
+        self,
+        text: str,
+        entities: list[Entity],
+    ) -> list:
+        """
+        Analysera och identifiera alla parter i dokumentet.
+
+        Args:
+            text: Dokumenttexten
+            entities: Identifierade entiteter
+
+        Returns:
+            Lista med DocumentParty-objekt
+        """
+        try:
+            return self.party_analyzer.identify_parties(text, entities)
+        except Exception as e:
+            logger.warning(f"Partsanalys misslyckades: {e}")
+            return []
+
+    def _identify_requester_party(
+        self,
+        requester_ssn: Optional[str],
+        requester_type: Optional[RequesterType],
+        requester_party_id: Optional[str],
+        parties: list,
+        entities: list[Entity],
+        text: str,
+    ) -> Optional[str]:
+        """
+        Identifiera beställarens part-ID.
+
+        Args:
+            requester_ssn: Beställarens personnummer
+            requester_type: Typ av beställare
+            requester_party_id: Explicit part-ID
+            parties: Alla identifierade parter
+            entities: Alla entiteter
+            text: Dokumenttexten
+
+        Returns:
+            Beställarens part-ID eller None
+        """
+        # Om explicit part-ID anges, använd det
+        if requester_party_id:
+            return requester_party_id
+
+        # Om inga parter identifierats, returnera None
+        if not parties:
+            return None
+
+        # Försök matcha personnummer till part
+        if requester_ssn:
+            normalized_ssn = requester_ssn.replace("-", "")
+            for party in parties:
+                if party.ssn and party.ssn.replace("-", "") == normalized_ssn:
+                    return party.party_id
+
+        # Om ingen explicit match, använd heuristik baserat på requester_type
+        if requester_type == RequesterType.SUBJECT_SELF:
+            # Huvudpersonen - försök hitta SUBJECT-rollen
+            for party in parties:
+                if party.role == PersonRole.SUBJECT:
+                    return party.party_id
+        
+        elif requester_type in (RequesterType.PARENT_1, RequesterType.PARENT_2):
+            # Förälder - försök hitta föräldrarollen
+            for party in parties:
+                if party.relation in ["mamma", "pappa", "förälder"]:
+                    return party.party_id
+
+        # Default: första parten
+        return parties[0].party_id if parties else None
+
+    def _apply_party_aware_masking(
+        self,
+        text: str,
+        entities: list[Entity],
+        assessments: list[SensitivityAssessment],
+        requester_type: RequesterType,
+        requester_party_id: Optional[str],
+        parties: list,
+    ) -> MaskingResult:
+        """
+        Applicera maskning med partsinsyn.
+
+        Args:
+            text: Texten att maskera
+            entities: Alla entiteter
+            assessments: Känslighetsbedömningar
+            requester_type: Typ av beställare
+            requester_party_id: Beställarens part-ID
+            parties: Alla identifierade parter
+
+        Returns:
+            MaskingResult
+        """
+        # Hämta maskeringsregler baserat på beställartyp
+        masking_rules = self.party_analyzer.get_masking_rules(
+            requester_type, requester_party_id, parties
+        )
+
+        # Standardmaskering för entiteter som inte har specifika regler
+        requester_entities = set()
+        if requester_party_id:
+            # Hitta beställarens entiteter baserat på part-ID
+            for party in parties:
+                if party.party_id == requester_party_id:
+                    # Lägg till alla namn och alias för denna part
+                    if party.name:
+                        requester_entities.add(party.name)
+                    requester_entities.update(party.aliases)
+                    if party.ssn:
+                        requester_entities.add(party.ssn)
+                        requester_entities.add(party.ssn.replace("-", ""))
+
+        # Applicera standardmaskering
+        return self.masker.mask_text(
+            text,
+            entities,
+            assessments,
+            requester_entities,
+        )
 
     def _identify_requester_entities(
         self,
@@ -413,5 +615,32 @@ def create_workflow(
         use_llm=use_llm,
         llm_api_key=api_key,
         masking_style=masking_style,
+    )
+    return MenprovningWorkflow(config)
+
+
+def create_workflow(
+    api_key: Optional[str] = None,
+    use_llm: bool = True,
+    masking_style: str = "brackets",
+    analyze_all_sections: bool = True,
+) -> MenprovningWorkflow:
+    """
+    Fabriksfunktion for att skapa en workflow.
+
+    Args:
+        api_key: OpenRouter API-nyckel
+        use_llm: Anvand LLM for analys
+        masking_style: Maskeringsstil
+        analyze_all_sections: Analysera hela dokumentet
+
+    Returns:
+        Konfigurerad MenprovningWorkflow
+    """
+    config = WorkflowConfig(
+        use_llm=use_llm,
+        llm_api_key=api_key,
+        masking_style=masking_style,
+        analyze_all_sections=analyze_all_sections,
     )
     return MenprovningWorkflow(config)

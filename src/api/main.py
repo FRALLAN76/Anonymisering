@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from src.workflow.orchestrator import create_workflow, WorkflowConfig
+from src.core.models import RequesterType
 
 
 # Pydantic-modeller for API
@@ -21,6 +22,8 @@ class TextAnalysisRequest(BaseModel):
     text: str = Field(..., description="Texten att analysera")
     document_id: str = Field(default="unknown", description="Dokument-ID")
     requester_ssn: Optional[str] = Field(None, description="Bestellarens personnummer")
+    requester_type: Optional[RequesterType] = Field(None, description="Typ av bestallare")
+    requester_party_id: Optional[str] = Field(None, description="Part-ID om bestallaren ar identifierad")
     masking_style: str = Field(default="brackets", description="Maskeringsstil")
     use_llm: bool = Field(default=True, description="Anvand LLM for analys")
 
@@ -112,6 +115,8 @@ async def analyze_text(request: TextAnalysisRequest):
             text=request.text,
             document_id=request.document_id,
             requester_ssn=request.requester_ssn,
+            requester_type=request.requester_type,
+            requester_party_id=request.requester_party_id,
         )
 
         return AnalysisResponse(
@@ -134,6 +139,8 @@ async def analyze_text(request: TextAnalysisRequest):
 async def analyze_document(
     file: UploadFile = File(...),
     requester_ssn: Optional[str] = Query(None, description="Bestellarens personnummer"),
+    requester_type: Optional[RequesterType] = Query(None, description="Typ av bestallare"),
+    requester_party_id: Optional[str] = Query(None, description="Part-ID om bestallaren ar identifierad"),
     masking_style: str = Query("brackets", description="Maskeringsstil"),
     use_llm: bool = Query(True, description="Anvand LLM"),
 ):
@@ -163,6 +170,8 @@ async def analyze_document(
             result = workflow.process_document(
                 document_path=tmp_path,
                 requester_ssn=requester_ssn,
+                requester_type=requester_type,
+                requester_party_id=requester_party_id,
             )
 
             return AnalysisResponse(
@@ -203,6 +212,8 @@ async def analyze_quick(request: TextAnalysisRequest):
             text=request.text,
             document_id=request.document_id,
             requester_ssn=request.requester_ssn,
+            requester_type=request.requester_type,
+            requester_party_id=request.requester_party_id,
         )
 
         return {

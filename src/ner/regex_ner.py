@@ -91,7 +91,7 @@ class RegexNER:
         re.compile(r'\b(\d{4}[-]\d{6})\b'),
     ]
 
-    # Svenska förnamn (vanliga)
+    # Svenska förnamn (vanliga + ovanliga)
     SWEDISH_FIRST_NAMES = {
         'Anna', 'Lars', 'Erik', 'Maria', 'Johan', 'Emma', 'Oscar', 'Patrik',
         'Fredrik', 'Christina', 'Magnus', 'Susanne', 'Anders', 'Helena', 'Per',
@@ -110,6 +110,17 @@ class RegexNER:
         # Fler moderna namn
         'William', 'Alice', 'Liam', 'Elsa', 'Noah', 'Maja', 'Lucas', 'Ella',
         'Oliver', 'Wilma', 'Hugo', 'Ebba', 'Axel', 'Alma', 'Leo', 'Olivia',
+        # Ovanliga svenska namn
+        'Sveinung', 'Eskil', 'Folke', 'Gunnar', 'Holger', 'Ingvar', 'Jarl',
+        'Knut', 'Leif', 'Njål', 'Ove', 'Ragnar', 'Sten', 'Torbjörn',
+        'Viggo', 'Yngve', 'Åke', 'Örjan', 'Aina', 'Bodil', 'Dagny',
+        'Ebba', 'Freja', 'Gertrud', 'Hilda', 'Inga', 'Jenny', 'Kerstin',
+        'Liv', 'Märta', 'Nanna', 'Ragna', 'Signe', 'Tove', 'Ulla',
+        'Vera', 'Ylva', 'Åsa', 'Örjan',
+        # Internationella namn som förekommer i Sverige
+        'Mohammed', 'Ali', 'Fatima', 'Ahmed', 'Yasmin', 'Mustafa',
+        'Ibrahim', 'Aisha', 'Hassan', 'Leila', 'Omar', 'Sofia',
+        'Maria', 'Anna', 'Eva', 'Lena', 'Karin', 'Elisabeth',
     }
 
     # Mönster för svenska efternamn

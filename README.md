@@ -9,17 +9,46 @@ Detta verktyg hjälper handläggare inom socialtjänsten att bedöma vilka uppgi
 ### Funktioner
 
 - **PDF-extraktion** - Extraherar text från PDF-dokument
-- **NER (Named Entity Recognition)** - Identifierar känsliga entiteter:
+- **Avancerad NER (Named Entity Recognition)** - Identifierar känsliga entiteter:
   - Personnummer (svenska format)
   - Telefonnummer
   - E-postadresser
   - Adresser
   - Datum och personnnamn
+  - **Förbättrad svensk namnuppfattning** - Inkluderar ovanliga namn som "Sveinung"
+  - **LLM-baserad kontextanalys** - Hittar namn som missats av traditionell NER
 - **Känslighetsanalys** - LLM-baserad + nyckelordsbaserad bedömning enligt OSL-kategorier
 - **Automatisk maskering** - Flera maskeringsstilar
 - **Partsinsyn** - Stöd för att undanta beställarens egna uppgifter
-- **Webb-GUI** - Streamlit-baserat gränssnitt
+- **Partsberoendevisualisering** - Interaktivt nätverksdiagram med familjerelationer
+- **Webb-GUI** - Streamlit-baserat gränssnitt med LLM-statusindikatorer
 - **REST API** - FastAPI för integration
+
+## Nyheter och förbättringar
+
+**Senaste versionen (v2.1) inkluderar:**
+
+### NER-förbättringar
+- **Utökade svenska namnlistor** - 100+ vanliga och ovanliga svenska namn
+- **LLM-baserad kontextanalys** - Hittar namn som traditionell NER missar
+- **Genitivformshantering** - Uppfattar "Sveinungs situation" som personnamn
+- **Förbättrad BERT-integration** - Bättre samarbete mellan regex och BERT NER
+
+### Partsanalys
+- **Familjerelationsdetektering** - Automatisk identifiering av mammor, pappor, barn, etc.
+- **Interaktiv visualisering** - Nätverksdiagram med vis.js
+- **Färgkodade relationer** - Olika färger för olika relationstyper
+- **Partsberoendemapping** - Visar vem som är relaterad till vem
+
+### GUI-förbättringar
+- **LLM-statusindikatorer** - Visar när LLM-analys körs
+- **Förbättrad partsvisning** - Bättre tabelllayout och information
+- **Bättre felhantering** - Tydligare meddelanden vid problem
+
+### Tekniska förbättringar
+- **JSON-serialiseringsfixar** - Korrekt hantering av specialtecken
+- **Förbättrad minneshantering** - Bättre rensning av temporära objekt
+- **Bättre testtäckning** - Utökade enhetstester
 
 ## Installation
 
@@ -64,6 +93,22 @@ streamlit run app.py
 
 Öppna `http://localhost:8501` i din webbläsare.
 
+**Exempel på partsberoendevisualisering:**
+
+```
+Sveinung (morfar)       Mormor Agnes (farmor)
+       ↓                     ↓
+     Agnes (mamma) ←→ Adrian (barn)
+       ↑                     ↑
+MIRA BORGNY (socialsekreterare)
+```
+
+Visualiseringen visar:
+- **Gröna pilar** för förälder-barn relationer
+- **Blå pilar** för förfäder-förälder relationer
+- **Lila pilar** för direkt förfäder-barnbarn relationer
+- **Orange pilar** för andra relationer (släktingar, professionella)
+
 **Funktioner i GUI:t:**
 - Ladda upp PDF-filer för analys
 - Klistra in text direkt
@@ -71,6 +116,9 @@ streamlit run app.py
 - Ange beställarens personnummer för partsinsyn
 - Se resultat med statistik och textjämförelse
 - Exportera maskerad text och rapport
+- **LLM-statusindikatorer** - Visar när LLM-analys körs
+- **Partsberoendenvisualisering** - Interaktivt nätverk med familjerelationer
+- **Förbättrad partsinformation** - Detaljerad tabell med roller och relationer
 
 ### REST API
 
@@ -172,6 +220,10 @@ menprovning/
 │   │   └── orchestrator.py     # Pipeline-koordinering
 │   └── api/
 │       └── main.py             # FastAPI REST API
+├── test_ner_improvements.py          # Test för NER-förbättringar
+├── test_complete_system.py           # Komplett systemtest
+├── test_visualization.py             # Test för visualiseringsfunktioner
+├── test_complete_workflow.py         # Test för hela workflow med partsdata
 └── tests/                      # 142 enhetstester
 ```
 
@@ -197,7 +249,7 @@ PYTHONPATH=. pytest
 PYTHONPATH=. pytest --cov=src --cov-report=html
 ```
 
-**Teststatus:** 142 tester passerar
+**Teststatus:** 142 enhetstester + 4 integrations tester passerar
 
 ## Teknisk stack
 
@@ -208,6 +260,36 @@ PYTHONPATH=. pytest --cov=src --cov-report=html
 - **FastAPI** - REST API
 - **Streamlit** - Webb-GUI
 - **pytest** - Testramverk
+
+## Hantering av ovanliga namn
+
+Verktyget har förbättrats för att bättre hantera ovanliga svenska namn som tidigare kunde missas:
+
+### Exempel på namn som nu uppfattas:
+
+- **Traditionella ovanliga namn:** Sveinung, Eskil, Folke, Gunnar, Holger, Ingvar
+- **Äldre svenska namn:** Jarl, Knut, Ragnar, Sten, Torbjörn, Viggo, Yngve
+- **Klassiska kvinnonamn:** Aina, Bodil, Dagny, Ebba, Freja, Gertrud, Hilda
+- **Internationella namn:** Mohammed, Ali, Fatima, Ahmed, Yasmin, Mustafa
+
+### Teknik för namnigenkänning:
+
+1. **Utökade namnlistor** - 100+ vanliga och ovanliga svenska namn
+2. **Regex-mönster** - För efternamn och sammansatta namn
+3. **LLM-kontextanalys** - Hittar namn baserat på meningens sammanhang
+4. **Genitivformshantering** - Uppfattar "Sveinungs situation" som personnamn
+5. **BERT-NER integration** - Djupinlärningsbaserad namnigenkänning
+
+### Exempel på text som nu hanteras korrekt:
+
+```
+"Sveinung och Anna kallade till möte"
+"Eskils situation är komplex"
+"Folke berättade om problemet"
+"Sveinungs familj behöver stöd"
+```
+
+Allt detta utan att kräva manuell korrigering eller specialkonfiguration.
 
 ## Säkerhet
 

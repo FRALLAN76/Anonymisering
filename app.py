@@ -6,24 +6,29 @@ Kör med: streamlit run app.py
 """
 
 import json
+import os
 import tempfile
 import time
 from pathlib import Path
 
 import streamlit as st
+from dotenv import load_dotenv
+
+# Ladda miljövariabler från .env
+load_dotenv()
 
 # Sätt PYTHONPATH
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.workflow.orchestrator import create_workflow
-from src.core.models import SensitivityLevel
+from src.core.models import SensitivityLevel, DocumentParty
 
 
 # === KONFIGURATION ===
-# OpenRouter API-nyckel (valfritt - för LLM-analys)
-# Skaffa ny på: https://openrouter.ai
-DEFAULT_API_KEY = ""
+# OpenRouter API-nyckel läses från .env-fil (säkrare än hårdkodning)
+# Skapa .env-fil med: OPENROUTER_API_KEY=din-nyckel-här
+DEFAULT_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
 
 # Sidkonfiguration
@@ -39,10 +44,20 @@ if "analysis_result" not in st.session_state:
     st.session_state.analysis_result = None
 if "source_name" not in st.session_state:
     st.session_state.source_name = None
+if "use_llm" not in st.session_state:
+    st.session_state.use_llm = False
+if "api_key" not in st.session_state:
+    st.session_state.api_key = None
 
-# CSS för bättre utseende
+# CSS för bättre utseende - optimerad för större textvisning
 st.markdown("""
 <style>
+    /* Använd mer av skärmen */
+    .block-container {
+        max-width: 95% !important;
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+    }
     .main-header {
         font-size: 2.5rem;
         font-weight: bold;
@@ -81,13 +96,37 @@ st.markdown("""
         border-radius: 5px;
         font-weight: bold;
     }
+    /* Synkroniserade textpaneler */
+    .sync-scroll-container {
+        display: flex;
+        gap: 1rem;
+        width: 100%;
+    }
+    .sync-panel {
+        flex: 1;
+        height: 70vh;
+        overflow-y: auto;
+        padding: 1rem;
+        font-family: monospace;
+        white-space: pre-wrap;
+        font-size: 0.9rem;
+        line-height: 1.5;
+    }
+    .sync-panel-original {
+        background-color: #f5f5f5;
+        border-left: 4px solid #9e9e9e;
+    }
+    .sync-panel-masked {
+        background-color: #fffde7;
+        border-left: 4px solid #ffc107;
+    }
     .masked-text {
         background-color: #fffde7;
         border-left: 4px solid #ffc107;
         padding: 1rem;
         font-family: monospace;
         white-space: pre-wrap;
-        max-height: 500px;
+        height: 70vh;
         overflow-y: auto;
     }
     .original-text {
@@ -96,7 +135,7 @@ st.markdown("""
         padding: 1rem;
         font-family: monospace;
         white-space: pre-wrap;
-        max-height: 500px;
+        height: 70vh;
         overflow-y: auto;
     }
 </style>
@@ -140,8 +179,23 @@ def main():
         # LLM-inställningar
         use_llm = st.checkbox(
             "Använd LLM för analys",
-            value=False,  # Avstängd som default - kräver giltig API-nyckel
+            value=True,  # Aktiverad med giltig API-nyckel
             help="Ger mer exakt analys men kräver API-nyckel och tar längre tid"
+        )
+
+        # Visa LLM-status
+        if use_llm and api_key:
+            st.success("✅ LLM är aktiverat och redo för analys")
+        elif use_llm and not api_key:
+            st.warning("⚠️ LLM är aktiverat men ingen API-nyckel är konfigurerad")
+        else:
+            st.info("ℹ️ LLM är avstängt - endast regelbaserad analys kommer att användas")
+
+        # Analysalternativ
+        analyze_all = st.checkbox(
+            "Analysera hela dokumentet",
+            value=True,
+            help="Om avmarkerad analyseras max 50 sektioner (snabbare)"
         )
 
         # Maskeringsstil
@@ -208,7 +262,7 @@ def main():
                 )
 
             if analyze_button:
-                analyze_document(uploaded_file, api_key, use_llm, masking_style, requester_ssn)
+                analyze_document(uploaded_file, api_key, use_llm, masking_style, requester_ssn, analyze_all)
 
     # Tab 2: Textanalys
     with tab2:
@@ -222,14 +276,14 @@ def main():
 
         if text_input:
             if st.button("🔍 Analysera text", type="primary", key="analyze_text"):
-                analyze_text(text_input, api_key, use_llm, masking_style, requester_ssn)
+                analyze_text(text_input, api_key, use_llm, masking_style, requester_ssn, analyze_all)
 
     # Visa sparade resultat
     if st.session_state.analysis_result is not None:
         display_results(st.session_state.analysis_result, st.session_state.source_name)
 
 
-def analyze_document(uploaded_file, api_key, use_llm, masking_style, requester_ssn):
+def analyze_document(uploaded_file, api_key, use_llm, masking_style, requester_ssn, analyze_all=True):
     """Analysera ett uppladdat dokument."""
 
     # Spara temporärt
@@ -242,6 +296,7 @@ def analyze_document(uploaded_file, api_key, use_llm, masking_style, requester_s
             # Progress bar
             progress_bar = st.progress(0)
             status_text = st.empty()
+            llm_status = st.empty()
 
             status_text.text("Skapar workflow...")
             progress_bar.progress(10)
@@ -250,6 +305,7 @@ def analyze_document(uploaded_file, api_key, use_llm, masking_style, requester_s
                 api_key=api_key if use_llm else None,
                 use_llm=use_llm and bool(api_key),
                 masking_style=masking_style,
+                analyze_all_sections=analyze_all,
             )
 
             status_text.text("Extraherar text från PDF...")
@@ -261,6 +317,12 @@ def analyze_document(uploaded_file, api_key, use_llm, masking_style, requester_s
                 requester_ssn=requester_ssn if requester_ssn else None,
             )
 
+            # Visa LLM-status om LLM användes
+            if use_llm and api_key:
+                llm_status.success("✅ LLM-analys slutförd")
+            else:
+                llm_status.info("ℹ️ Regelbaserad analys slutförd")
+
             progress_bar.progress(100)
             status_text.empty()
             progress_bar.empty()
@@ -268,6 +330,8 @@ def analyze_document(uploaded_file, api_key, use_llm, masking_style, requester_s
         # Spara resultat i session state
         st.session_state.analysis_result = result
         st.session_state.source_name = uploaded_file.name
+        st.session_state.use_llm = use_llm
+        st.session_state.api_key = api_key
         st.rerun()
 
     finally:
@@ -275,7 +339,7 @@ def analyze_document(uploaded_file, api_key, use_llm, masking_style, requester_s
         Path(tmp_path).unlink(missing_ok=True)
 
 
-def analyze_text(text, api_key, use_llm, masking_style, requester_ssn):
+def analyze_text(text, api_key, use_llm, masking_style, requester_ssn, analyze_all=True):
     """Analysera inklistrad text."""
 
     with st.spinner("Analyserar text..."):
@@ -283,6 +347,7 @@ def analyze_text(text, api_key, use_llm, masking_style, requester_ssn):
             api_key=api_key if use_llm else None,
             use_llm=use_llm and bool(api_key),
             masking_style=masking_style,
+            analyze_all_sections=analyze_all,
         )
 
         result = workflow.process_text(
@@ -291,9 +356,17 @@ def analyze_text(text, api_key, use_llm, masking_style, requester_ssn):
             requester_ssn=requester_ssn if requester_ssn else None,
         )
 
+        # Visa LLM-status om LLM användes
+        if use_llm and api_key:
+            st.success("✅ LLM-analys slutförd")
+        else:
+            st.info("ℹ️ Regelbaserad analys slutförd")
+
     # Spara resultat i session state
     st.session_state.analysis_result = result
     st.session_state.source_name = "Inklistrad text"
+    st.session_state.use_llm = use_llm
+    st.session_state.api_key = api_key
     st.rerun()
 
 
@@ -305,7 +378,7 @@ def display_results(result, source_name):
     st.caption(f"Källa: {source_name}")
 
     # Översta raden - nyckeltal
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
         st.metric("⏱️ Tid", f"{result.processing_time_ms/1000:.1f}s")
@@ -324,6 +397,20 @@ def display_results(result, source_name):
         level = result.overall_sensitivity.value
         st.markdown("**Känslighetsnivå**")
         st.markdown(get_sensitivity_badge(level), unsafe_allow_html=True)
+
+    with col5:
+        # Visa analysmetod
+        if st.session_state.use_llm and st.session_state.api_key:
+            st.markdown("**Analysmetod**")
+            st.markdown('<span style="color: #4CAF50; font-weight: bold;">🤖 LLM</span>', unsafe_allow_html=True)
+        else:
+            st.markdown("**Analysmetod**")
+            st.markdown('<span style="color: #2196F3; font-weight: bold;">📊 Regelbaserad</span>', unsafe_allow_html=True)
+
+    # Visa analysomfattning
+    sections_analyzed = result.statistics.get("assessments", {}).get("total", len(result.assessments))
+    doc_chars = result.statistics.get("document", {}).get("characters", len(result.original_text))
+    st.info(f"📊 **Analysstatistik:** {sections_analyzed} sektioner analyserade | {doc_chars:,} tecken | Hela dokumentet maskerades (NER på 100%)")
 
     # Detaljerad statistik
     st.divider()
@@ -379,25 +466,117 @@ def display_results(result, source_name):
 
     view_mode = st.radio(
         "Visningsläge",
-        ["Sida vid sida", "Endast maskerad", "Endast original"],
+        ["Sida vid sida (synkad)", "Endast maskerad", "Endast original"],
         horizontal=True,
         key="view_mode"
     )
 
-    if view_mode == "Sida vid sida":
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("**Original**")
-            st.markdown(
-                f'<div class="original-text">{_escape_html(result.original_text[:5000])}{"..." if len(result.original_text) > 5000 else ""}</div>',
-                unsafe_allow_html=True
-            )
-        with col2:
-            st.markdown("**Maskerad**")
-            st.markdown(
-                f'<div class="masked-text">{_escape_html(result.masked_text[:5000])}{"..." if len(result.masked_text) > 5000 else ""}</div>',
-                unsafe_allow_html=True
-            )
+    if view_mode == "Sida vid sida (synkad)":
+        # Synkroniserad scrollning med isolerad HTML-komponent
+        import streamlit.components.v1 as components
+
+        original_html = _escape_html(result.original_text)
+        masked_html = _escape_html(result.masked_text)
+
+        # Komplett HTML med inbyggd JavaScript och toggle
+        sync_component = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+                body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; }}
+                .container {{ display: flex; gap: 1rem; height: calc(100vh - 50px); }}
+                .panel-wrapper {{ flex: 1; display: flex; flex-direction: column; }}
+                .panel-header {{
+                    font-weight: bold;
+                    padding: 0.5rem;
+                    background: #f0f0f0;
+                    border-bottom: 1px solid #ddd;
+                }}
+                .panel {{
+                    flex: 1;
+                    overflow-y: auto;
+                    padding: 1rem;
+                    font-family: monospace;
+                    font-size: 13px;
+                    line-height: 1.6;
+                    white-space: pre-wrap;
+                    word-wrap: break-word;
+                }}
+                .panel-original {{ background: #f5f5f5; border-left: 4px solid #9e9e9e; }}
+                .panel-masked {{ background: #fffde7; border-left: 4px solid #ffc107; }}
+                .controls {{
+                    padding: 0.5rem;
+                    background: #e3f2fd;
+                    border-bottom: 1px solid #90caf9;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                }}
+                .controls label {{ cursor: pointer; user-select: none; }}
+                .sync-indicator {{
+                    display: inline-block;
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 50%;
+                    margin-left: 0.5rem;
+                }}
+                .sync-on {{ background: #4caf50; }}
+                .sync-off {{ background: #9e9e9e; }}
+            </style>
+        </head>
+        <body>
+            <div class="controls">
+                <label>
+                    <input type="checkbox" id="syncToggle" checked>
+                    🔗 Synkroniserad scrollning
+                </label>
+                <span id="syncIndicator" class="sync-indicator sync-on"></span>
+            </div>
+            <div class="container">
+                <div class="panel-wrapper">
+                    <div class="panel-header">Original</div>
+                    <div id="panel1" class="panel panel-original">{original_html}</div>
+                </div>
+                <div class="panel-wrapper">
+                    <div class="panel-header">Maskerad</div>
+                    <div id="panel2" class="panel panel-masked">{masked_html}</div>
+                </div>
+            </div>
+            <script>
+                const panel1 = document.getElementById('panel1');
+                const panel2 = document.getElementById('panel2');
+                const toggle = document.getElementById('syncToggle');
+                const indicator = document.getElementById('syncIndicator');
+                let isSyncing = false;
+                let syncEnabled = true;
+
+                function syncScroll(source, target) {{
+                    if (!syncEnabled || isSyncing) return;
+                    isSyncing = true;
+                    const maxScroll = source.scrollHeight - source.clientHeight;
+                    if (maxScroll > 0) {{
+                        const ratio = source.scrollTop / maxScroll;
+                        target.scrollTop = ratio * (target.scrollHeight - target.clientHeight);
+                    }}
+                    requestAnimationFrame(() => {{ isSyncing = false; }});
+                }}
+
+                panel1.addEventListener('scroll', () => syncScroll(panel1, panel2));
+                panel2.addEventListener('scroll', () => syncScroll(panel2, panel1));
+
+                toggle.addEventListener('change', (e) => {{
+                    syncEnabled = e.target.checked;
+                    indicator.className = 'sync-indicator ' + (syncEnabled ? 'sync-on' : 'sync-off');
+                }});
+            </script>
+        </body>
+        </html>
+        """
+
+        components.html(sync_component, height=700, scrolling=False)
+
     elif view_mode == "Endast maskerad":
         st.markdown(
             f'<div class="masked-text">{_escape_html(result.masked_text)}</div>',
@@ -413,30 +592,81 @@ def display_results(result, source_name):
     st.divider()
     st.subheader("💾 Exportera")
 
+    # Rensa filnamn (ta bort .pdf etc.)
+    clean_name = Path(source_name).stem if source_name else "dokument"
+
     col1, col2, col3 = st.columns(3)
 
     with col1:
         st.download_button(
             "📄 Ladda ner maskerad text",
             data=result.masked_text,
-            file_name=f"maskerad_{source_name}.txt",
+            file_name=f"maskerad_{clean_name}.txt",
             mime="text/plain",
         )
 
     with col2:
-        # JSON-export
+        # JSON-export med fullständig statistik
+        from collections import Counter
+        entity_types = Counter(e.type.value for e in result.entities)
+        category_counts = Counter(a.primary_category.value for a in result.assessments) if result.assessments else {}
+
+        masked = result.masking_result.statistics.get("masked_count", 0)
+        released = result.masking_result.statistics.get("released_count", 0)
+        total = masked + released
+
+        # Konvertera DocumentParty-objekt till dict för export
+        def party_to_dict(party):
+            return {
+                "party_id": party.party_id,
+                "namn": party.name,
+                "roll": party.role,
+                "relation": party.relation,
+                "är_minderårig": party.is_minor,
+                "aliaser": party.aliases,
+            }
+        
         export_data = {
-            "källa": source_name,
-            "övergripande_känslighet": result.overall_sensitivity.value,
-            "antal_entiteter": len(result.entities),
-            "antal_maskerade": result.masking_result.statistics.get("masked_count", 0),
-            "bearbetningstid_ms": result.processing_time_ms,
-            "maskerade_entiteter": result.masking_result.masked_entities[:50],
+            "metadata": {
+                "källa": source_name,
+                "exporterad": time.strftime("%Y-%m-%d %H:%M:%S"),
+            },
+            "analysresultat": {
+                "övergripande_känslighet": result.overall_sensitivity.value,
+                "bearbetningstid_sekunder": round(result.processing_time_ms / 1000, 1),
+                "antal_tecken": len(result.original_text),
+                "antal_sektioner_analyserade": len(result.assessments),
+            },
+            "entiteter": {
+                "totalt": len(result.entities),
+                "per_typ": dict(entity_types),
+            },
+            "maskering": {
+                "antal_maskerade": masked,
+                "antal_släppta": released,
+                "maskerings_procent": round(masked / total * 100, 1) if total > 0 else 0,
+            },
+            "känslighetskategorier": dict(category_counts),
+            "maskerade_entiteter": [
+                {
+                    "original": e.get("original", ""),
+                    "ersättning": e.get("replacement", ""),
+                    "typ": e.get("type", ""),
+                }
+                for e in result.masking_result.masked_entities[:100]
+            ],
         }
+        
+        # Lägg till partsinformation om tillgängligt
+        if hasattr(result, 'parties') and result.parties:
+            export_data["parter"] = {
+                "totalt": len(result.parties),
+                "detaljer": [party_to_dict(party) for party in result.parties],
+            }
         st.download_button(
             "📊 Ladda ner rapport (JSON)",
             data=json.dumps(export_data, indent=2, ensure_ascii=False),
-            file_name=f"rapport_{source_name}.json",
+            file_name=f"rapport_{clean_name}.json",
             mime="application/json",
         )
 
@@ -450,6 +680,307 @@ def display_results(result, source_name):
                     st.caption(f"... och {len(result.masking_result.masked_entities) - 30} till")
             else:
                 st.write("Inga entiteter maskerades")
+
+        # Visualisering av partsberoenden (om tillgängligt)
+        if hasattr(result, 'parties') and result.parties:
+            st.divider()
+            st.subheader("👥 Partsberoenden och relationer")
+            
+            # Kontrollera om det finns tillräckligt med parter för att visa ett nätverk
+            
+            # Alltid visa nätverk om det finns parter (även om inga relationer hittades)
+            if len(result.parties) >= 1:
+                # Skapa ett interaktivt nätverksdiagram med vis.js
+                import streamlit.components.v1 as components
+                
+                # Generera noder och länkar för visualisering
+                nodes = []
+                edges = []
+                
+                # Färgkoder för olika roller
+                role_colors = {
+                    "SUBJECT": "#FF6B6B",      # Röd för huvudperson
+                    "REQUESTER": "#4ECDC4",     # Turkos för beställare
+                    "REQUESTER_CHILD": "#45B7D1", # Ljusblå för beställarens barn
+                    "REPORTER": "#FFA07A",      # Orange för anmälare
+                    "THIRD_PARTY": "#98D8C8",   # Grön för tredje man
+                    "PROFESSIONAL": "#A5A5A5",  # Grå för tjänstemän
+                    "UNKNOWN": "#D4D4D4",       # Ljusgrå för okända
+                }
+                
+                # Skapa noder
+                for party in result.parties:
+                    role_color = role_colors.get(party.role, "#D4D4D4")
+                    
+                    # Rollnamn på svenska
+                    role_swedish = {
+                        "SUBJECT": "Huvudperson",
+                        "REQUESTER": "Beställare",
+                        "REQUESTER_CHILD": "Beställarens barn",
+                        "REPORTER": "Anmälare",
+                        "THIRD_PARTY": "Tredje man",
+                        "PROFESSIONAL": "Tjänsteman",
+                        "UNKNOWN": "Okänd",
+                    }.get(party.role, party.role)
+                    
+                    nodes.append({
+                        "id": party.party_id,
+                        "label": party.name or f"Part {party.party_id}",
+                        "title": f"{party.name or f'Part {party.party_id}'}\nRoll: {role_swedish}\nRelation: {party.relation or 'Okänd'}",
+                        "color": role_color,
+                        "shape": "circle" if party.is_minor else "dot",
+                        "size": 25 if party.is_minor else 20,
+                    })
+                
+                # Skapa länkar baserat på relationer
+                # Förbättrad logik för att skapa meningsfulla relationer
+                relation_map = {
+                    "mamma": "barn",
+                    "pappa": "barn", 
+                    "morfar": "barnbarn",
+                    "farmor": "barnbarn",
+                    "barn": "förälder",
+                    "granne": "granne",
+                }
+                
+                # Förbättrad relationslogik: Skapa meningsfulla familjerelationer
+                # Istället för att koppla alla parter med relationer till alla andra,
+                # skapar vi logiska familjestrukturer
+                
+                # Först, identifiera potentiella föräldrar och barn
+                parents = []
+                children = []
+                others = []
+                
+                for party in result.parties:
+                    if party.relation in ["mamma", "pappa", "förälder"]:
+                        parents.append(party)
+                    elif party.relation in ["barn", "son", "dotter"]:
+                        children.append(party)
+                    elif party.relation in ["morfar", "farmor", "farfar", "mormor"]:
+                        others.append(party)  # Förfäder
+                    else:
+                        others.append(party)
+                
+                # Skapa familjerelationer
+                # 1. Föräldrar -> Barn
+                for parent in parents:
+                    for child in children:
+                        edges.append({
+                            "from": parent.party_id,
+                            "to": child.party_id,
+                            "label": parent.relation or "förälder",
+                            "arrows": "to",
+                            "color": {
+                                "color": "#4CAF50",  # Grön för familjerelationer
+                                "highlight": "#2E7D32",
+                            },
+                            "smooth": {"enabled": True},
+                            "dashes": False,
+                        })
+                        
+                        # Omvänd relation
+                        reverse_relation = relation_map.get(parent.relation.lower(), "barn")
+                        edges.append({
+                            "from": child.party_id,
+                            "to": parent.party_id,
+                            "label": reverse_relation,
+                            "arrows": "to",
+                            "color": {
+                                "color": "#4CAF50",
+                                "highlight": "#2E7D32",
+                            },
+                            "smooth": {"enabled": True},
+                            "dashes": True,
+                        })
+                
+                # 2. Förfäder -> Föräldrar (och barnbarn)
+                for elder in others:
+                    if elder.relation in ["morfar", "farmor", "farfar", "mormor"]:
+                        # Koppla förfäder till föräldrar
+                        for parent in parents:
+                            edges.append({
+                                "from": elder.party_id,
+                                "to": parent.party_id,
+                                "label": elder.relation,
+                                "arrows": "to",
+                                "color": {
+                                    "color": "#2196F3",  # Blå för förfäder
+                                    "highlight": "#0B7FDA",
+                                },
+                                "smooth": {"enabled": True},
+                                "dashes": False,
+                            })
+                            
+                            # Omvänd relation
+                            reverse_relation = relation_map.get(elder.relation.lower(), "barnbarn")
+                            edges.append({
+                                "from": parent.party_id,
+                                "to": elder.party_id,
+                                "label": reverse_relation,
+                                "arrows": "to",
+                                "color": {
+                                    "color": "#2196F3",
+                                    "highlight": "#0B7FDA",
+                                },
+                                "smooth": {"enabled": True},
+                                "dashes": True,
+                            })
+                        
+                        # Koppla förfäder direkt till barnbarn också
+                        for child in children:
+                            edges.append({
+                                "from": elder.party_id,
+                                "to": child.party_id,
+                                "label": "morfar" if "mor" in elder.relation.lower() else "farfar",
+                                "arrows": "to",
+                                "color": {
+                                    "color": "#9C27B0",  # Lila för direkt förfäder-barnbarn relation
+                                    "highlight": "#7B1FA2",
+                                },
+                                "smooth": {"enabled": True},
+                                "dashes": False,
+                            })
+                
+                # 3. Specifika relationer (grannar, etc.)
+                for party in result.parties:
+                    if party.relation in ["granne", "släkting", "vän"]:
+                        # Koppla till huvudperson (första parten som antas vara huvudperson)
+                        if result.parties:
+                            main_party = result.parties[0]  # Antagande: första parten är huvudperson
+                            if main_party.party_id != party.party_id:
+                                edges.append({
+                                    "from": party.party_id,
+                                    "to": main_party.party_id,
+                                    "label": party.relation,
+                                    "arrows": "to",
+                                    "color": {
+                                        "color": "#FF9800",  # Orange för andra relationer
+                                        "highlight": "#F57C00",
+                                    },
+                                    "smooth": {"enabled": True},
+                                    "dashes": False,
+                                })
+                                
+                                # Omvänd relation
+                                edges.append({
+                                    "from": main_party.party_id,
+                                    "to": party.party_id,
+                                    "label": party.relation,
+                                    "arrows": "to",
+                                    "color": {
+                                        "color": "#FF9800",
+                                        "highlight": "#F57C00",
+                                    },
+                                    "smooth": {"enabled": True},
+                                    "dashes": True,
+                                })
+                                break  # Endast en relation per part för att undvika för många länkar
+            
+            # HTML för nätverksvisualisering
+            network_html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Partsberoenden</title>
+                <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+                <style type="text/css">
+                    #network {{
+                        width: 100%;
+                        height: 500px;
+                        border: 1px solid lightgray;
+                        border-radius: 5px;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div id="network"></div>
+                <script type="text/javascript">
+                    const nodes = new vis.DataSet({json.dumps(nodes, ensure_ascii=False)});
+                    const edges = new vis.DataSet({json.dumps(edges, ensure_ascii=False)});
+                    
+                    const container = document.getElementById("network");
+                    const data = {{ nodes: nodes, edges: edges }};
+                    const options = {{
+                        nodes: {{
+                            font: {{
+                                size: 14,
+                                face: "Arial",
+                            }},
+                            borderWidth: 2,
+                            shadow: true,
+                        }},
+                        edges: {{
+                            font: {{
+                                size: 12,
+                                align: "middle",
+                            }},
+                            arrows: {{
+                                to: {{
+                                    enabled: true,
+                                    scaleFactor: 0.5,
+                                }},
+                            }},
+                            smooth: {{
+                                type: "cubicBezier",
+                                forceDirection: "none",
+                            }},
+                        }},
+                        physics: {{
+                            enabled: true,
+                            barnesHut: {{
+                                gravitationalConstant: -80000,
+                                centralGravity: 0.3,
+                                springLength: 200,
+                                springConstant: 0.04,
+                                damping: 0.09,
+                                avoidOverlap: 0.1,
+                            }},
+                            minVelocity: 0.75,
+                        }},
+                        interaction: {{
+                            hover: true,
+                            tooltipDelay: 200,
+                        }},
+                    }};
+                    
+                    const network = new vis.Network(container, data, options);
+                    network.on("click", function(params) {{
+                        params.event = [["original", params.pointer.canvas]]];
+                    }});
+                </script>
+            </body>
+            </html>
+            """
+            
+            components.html(network_html, height=550)
+        else:
+            st.info("📊 Inga parter identifierades i dokumentet.")
+
+        # Visa partsinformation i tabellform
+        with st.expander("📋 Detaljerad partsinformation"):
+                for party in result.parties:
+                    with st.container():
+                        col1, col2, col3 = st.columns([2, 1, 1])
+                        
+                        role_swedish = {
+                            "SUBJECT": "Huvudperson",
+                            "REQUESTER": "Beställare", 
+                            "REQUESTER_CHILD": "Beställarens barn",
+                            "REPORTER": "Anmälare",
+                            "THIRD_PARTY": "Tredje man",
+                            "PROFESSIONAL": "Tjänsteman",
+                            "UNKNOWN": "Okänd",
+                        }.get(party.role, party.role)
+                        
+                        col1.markdown(f"**{party.name or f'Part {party.party_id}'}**")
+                        col2.markdown(f"👤 {role_swedish}")
+                        col3.markdown(f"🔗 {party.relation or 'Okänd relation'}")
+                        
+                        if party.aliases:
+                            st.caption(f"Aliaser: {', '.join(party.aliases)}")
+                        if party.is_minor:
+                            st.caption("⚠️ Minderårig")
 
 
 def _escape_html(text: str) -> str:

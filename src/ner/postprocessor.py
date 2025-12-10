@@ -5,10 +5,14 @@ och filtrerar bort falska positiva.
 """
 
 import re
+import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
 from src.core.models import Entity, EntityType
+from src.llm.client import LLMClient, LLMConfig
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -67,11 +71,21 @@ class EntityPostprocessor:
         self._exclude_patterns = [
             re.compile(p) for p in self.config.exclude_patterns
         ]
+        self._llm_client: Optional[LLMClient] = None
+
+    @property
+    def llm_client(self) -> LLMClient:
+        """Lazy loading av LLM-klient."""
+        if self._llm_client is None:
+            self._llm_client = LLMClient(LLMConfig())
+        return self._llm_client
 
     def process(
         self,
         regex_entities: list[Entity],
         bert_entities: Optional[list[Entity]] = None,
+        text: Optional[str] = None,
+        llm_config: Optional[LLMConfig] = None,
     ) -> list[Entity]:
         """
         Bearbeta och kombinera entiteter från olika NER-källor.
@@ -79,6 +93,8 @@ class EntityPostprocessor:
         Args:
             regex_entities: Entiteter från RegexNER
             bert_entities: Entiteter från BertNER (valfritt)
+            text: Hela texten (för LLM-baserad analys)
+            llm_config: LLM-konfiguration för avancerad analys
 
         Returns:
             Lista med bearbetade entiteter
@@ -102,6 +118,18 @@ class EntityPostprocessor:
 
         # Sortera på position
         entities.sort(key=lambda e: e.start)
+
+        # Cache för LLM-analys
+        self._existing_entities_cache = entities
+
+        # LLM-baserad namnigenkänning (om konfigurerad)
+        if text and llm_config and self.llm_client.is_configured():
+            llm_entities = self.detect_missed_names_with_llm(text, entities, llm_config)
+            if llm_entities:
+                # Kombinera och hantera överlapp igen
+                all_entities = entities + llm_entities
+                entities = self._resolve_overlaps(all_entities)
+                entities.sort(key=lambda e: e.start)
 
         return entities
 
@@ -285,6 +313,79 @@ class EntityPostprocessor:
             confidence=avg_confidence,
         )
 
+    def expand_person_entities(
+        self,
+        text: str,
+        entities: list[Entity],
+    ) -> list[Entity]:
+        """
+        Hitta ALLA förekomster av identifierade personnamn i texten.
+
+        NER kan missa vissa förekomster av samma namn. Denna metod:
+        1. Samlar alla unika personnamn som hittats
+        2. Söker globalt efter alla förekomster (case-insensitive)
+        3. Hanterar böjningsformer (genitiv: Fredriks, Sveinungs)
+
+        Args:
+            text: Hela texten
+            entities: Befintliga entiteter
+
+        Returns:
+            Utökad lista med entiteter
+        """
+        # Samla unika personnamn (minst 3 tecken)
+        person_names: set[str] = set()
+        for e in entities:
+            if e.type == EntityType.PERSON and len(e.text) >= 3:
+                # Lägg till grundformen
+                name = e.text.strip()
+                # Hoppa över fragmenterade tokens (##, korta)
+                if name.startswith('##') or len(name) < 3:
+                    continue
+                person_names.add(name)
+
+        if not person_names:
+            return entities
+
+        # Skapa positionsset för befintliga entiteter
+        existing_positions: set[tuple[int, int]] = {
+            (e.start, e.end) for e in entities
+        }
+
+        new_entities: list[Entity] = []
+
+        for name in person_names:
+            # Skapa mönster för namn och dess böjningsformer
+            # Matcha: "Sveinung", "Sveinungs", "Sveinung's", "SVEINUNG"
+            escaped_name = re.escape(name)
+            pattern = re.compile(
+                rf'\b({escaped_name})(s|\'s|´s)?\b',
+                re.IGNORECASE
+            )
+
+            for match in pattern.finditer(text):
+                pos = (match.start(), match.end())
+
+                # Hoppa över om redan täckt av befintlig entitet
+                if any(self._overlaps(pos, existing) for existing in existing_positions):
+                    continue
+
+                # Lägg till ny entitet
+                new_entities.append(Entity(
+                    text=match.group(0),
+                    type=EntityType.PERSON,
+                    start=match.start(),
+                    end=match.end(),
+                    confidence=0.85,  # Hög konfidens - vi vet att namnet är korrekt
+                ))
+                existing_positions.add(pos)
+
+        # Kombinera och sortera
+        all_entities = list(entities) + new_entities
+        all_entities.sort(key=lambda e: e.start)
+
+        return all_entities
+
     def get_statistics(self, entities: list[Entity]) -> dict:
         """
         Beräkna statistik för entiteter.
@@ -309,3 +410,158 @@ class EntityPostprocessor:
             "average_confidence": round(avg_confidence, 3),
             "unique_texts": len(set(e.text for e in entities)),
         }
+
+    def detect_missed_names_with_llm(
+        self,
+        text: str,
+        existing_entities: list[Entity],
+        llm_config: Optional[LLMConfig] = None,
+    ) -> list[Entity]:
+        """
+        Använd LLM för att hitta namn som NER missat genom kontextanalys.
+
+        Denna metod analyserar texten och hittar namn som:
+        - Förekommer i kontext där personnamn förväntas
+        - Har stor begynnelsebokstav och följer svenska namnkonventioner
+        - Nämns tillsammans med andra identifierade personer
+        - Förekommer i meningar om familjerelationer
+
+        Args:
+            text: Hela texten att analysera
+            existing_entities: Befintliga entiteter från NER
+            llm_config: LLM-konfiguration (valfritt)
+
+        Returns:
+            Lista med nya person-entiteter som hittats
+        """
+        if not llm_config or not self.llm_client.is_configured():
+            logger.info("LLM inte konfigurerad - hoppar över kontextbaserad namnigenkänning")
+            return []
+
+        try:
+            # Skapa prompt för LLM-analys
+            prompt = self._create_name_detection_prompt(text, existing_entities)
+
+            # Anropa LLM
+            result = self.llm_client.chat_json(
+                messages=[{"role": "user", "content": prompt}],
+                system_prompt=self._get_name_detection_system_prompt(),
+            )
+
+            # Parsa resultat och skapa entiteter
+            return self._parse_llm_name_detection_result(result, text, existing_entities)
+
+        except Exception as e:
+            logger.warning(f"LLM-baserad namnigenkänning misslyckades: {e}")
+            return []
+
+    def _create_name_detection_prompt(
+        self,
+        text: str,
+        existing_entities: list[Entity],
+    ) -> str:
+        """Skapa prompt för LLM-baserad namnigenkänning."""
+        
+        # Samla befintliga personnamn
+        existing_names = set()
+        for entity in existing_entities:
+            if entity.type == EntityType.PERSON:
+                existing_names.add(entity.text)
+
+        # Skapa prompt
+        prompt = f"""
+Analysera följande text och identifiera ALLA personnamn som inte redan har hittats av NER-systemet.
+
+**Text att analysera:**
+{text[:2000]}...  # (texten är avkortad för analys)
+
+**Personnamn som redan hittats:**
+{', '.join(sorted(existing_names)) if existing_names else 'Inga namn hittats än'}
+
+**Instruktioner:**
+1. Läs texten noggrant och identifiera ALLA personnamn
+2. Fokusera på namn som:
+   - Har stor begynnelsebokstav
+   - Förekommer i kontext där personer nämns
+   - Följer svenska namnkonventioner
+   - Nämns tillsammans med andra personer
+   - Förekommer i familjerelaterade meningar
+3. Ignorera vanliga substantiv, organisationer och platser
+4. Var särskilt uppmärksam på ovanliga namn som kan ha missats
+
+**Exempel på namn som kan ha missats:**
+- "Sveinung" i "Sveinung och Anna kallade till möte"
+- "Eskil" i "Eskil berättade om situationen"
+- "Folke" i "Folke och hans familj"
+
+**Svara med JSON i formatet:**
+{{
+  "missed_names": [
+    {{
+      "name": "Namn Hittat",
+      "reason": "Varför detta troligen är ett personnamn",
+      "context": "Relevant textkontext"
+    }}
+  ]
+}}
+
+**Viktigt:** Var mycket noggrann och inkludera även ovanliga namn!
+"""
+        
+        return prompt
+
+    def _get_name_detection_system_prompt(self) -> str:
+        """Systemprompt för namnigenkänning."""
+        return """
+Du är en expert på svensk namngivning och textanalys. Din uppgift är att identifiera personnamn i svenska texter som NER-system kan ha missat.
+
+Du har djup kunskap om:
+- Svenska namnkonventioner (förnamn, efternamn, sammansatta namn)
+- Ovanliga och äldre svenska namn
+- Namn från olika kulturer som förekommer i Sverige
+- Hur namn används i sociala sammanhang
+
+Var särskilt uppmärksam på:
+1. Ovanliga namn som "Sveinung", "Eskil", "Folke"
+2. Namn i genitivform ("Sveinungs situation")
+3. Namn som följer efter titlar eller i listor
+4. Namn i citat och dialog
+
+Ge alltid välmotiverade svar och inkludera kontext!
+"""
+
+    def _parse_llm_name_detection_result(
+        self,
+        result: dict,
+        text: str,
+        existing_entities: list[Entity],
+    ) -> list[Entity]:
+        """Parsa LLM-resultat till entiteter."""
+        new_entities = []
+        existing_positions = set((e.start, e.end) for e in existing_entities)
+
+        for name_data in result.get("missed_names", []):
+            name = name_data.get("name", "")
+            if not name or len(name) < 2:
+                continue
+
+            # Sök efter namnet i texten (case-insensitive)
+            pattern = re.compile(rf'\b({re.escape(name)})\b', re.IGNORECASE)
+            
+            for match in pattern.finditer(text):
+                pos = (match.start(), match.end())
+                
+                # Hoppa över om redan täckt
+                if any(self._overlaps(pos, existing) for existing in existing_positions):
+                    continue
+
+                new_entities.append(Entity(
+                    text=match.group(1),
+                    type=EntityType.PERSON,
+                    start=match.start(),
+                    end=match.end(),
+                    confidence=0.90,  # Hög konfidens från LLM
+                ))
+                existing_positions.add(pos)
+
+        return new_entities

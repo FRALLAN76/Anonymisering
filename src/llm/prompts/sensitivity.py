@@ -225,3 +225,121 @@ Skapa en slutgiltig bedömning i JSON-format:
     "release_restrictions": ["<begränsning>", ...],
     "confidence": <0.0-1.0>
 }}"""
+
+
+# Prompt för att identifiera alla parter i ett ärende
+IDENTIFY_PARTIES_PROMPT = """Analysera följande socialtjänstakt och identifiera ALLA parter som nämns.
+
+TEXT (första 5000 tecken):
+\"\"\"
+{text}
+\"\"\"
+
+IDENTIFIERADE NAMN (från NER):
+{person_names}
+
+Din uppgift:
+1. Identifiera vilka personer som är inblandade i ärendet
+2. Bestäm deras ROLL och RELATION till varandra
+3. Notera om någon är MINDERÅRIG
+
+Roller att använda:
+- SUBJECT: Huvudperson som ärendet handlar om (barnet om barnärende)
+- PARENT_1: Förälder 1 (vanligtvis mamma)
+- PARENT_2: Förälder 2 (vanligtvis pappa)
+- CHILD: Barn i ärendet
+- REPORTER: Person som gjort anmälan/orosanmälan
+- PROFESSIONAL: Tjänsteman (socialsekreterare, läkare, etc.)
+- THIRD_PARTY: Annan person (granne, släkting, etc.)
+
+Svara i JSON-format:
+{{
+    "case_type": "<barnärende|vuxenärende|familjeärende>",
+    "parties": [
+        {{
+            "party_id": "P1",
+            "names": ["<namn>", "<eventuella alias>"],
+            "role": "<roll>",
+            "relation": "<mamma|pappa|barn|farmor|etc>",
+            "is_minor": <true|false|null>,
+            "age_if_known": <ålder eller null>,
+            "key_person": <true|false>
+        }},
+        ...
+    ],
+    "relationships": [
+        {{
+            "party1_id": "P1",
+            "party2_id": "P2",
+            "relationship": "<förälder-barn|partner|syskon|etc>"
+        }},
+        ...
+    ],
+    "confidence": <0.0-1.0>
+}}"""
+
+
+# Prompt för att avgöra vem en känslig uppgift "tillhör"
+OWNERSHIP_ANALYSIS_PROMPT = """Analysera följande textavsnitt och avgör VEM den känsliga informationen tillhör/gäller.
+
+TEXTAVSNITT:
+\"\"\"
+{text}
+\"\"\"
+
+IDENTIFIERADE PARTER I ÄRENDET:
+{parties}
+
+KÄNSLIGHETSKATEGORI: {category}
+
+Din uppgift:
+1. Avgör VEM informationen GÄLLER (vems hälsa, ekonomi, etc.)
+2. Avgör VEM som AVSLÖJADE informationen (om annan än den det gäller)
+3. Avgör vilka parter som INTE bör se denna information
+
+VIKTIGT enligt OSL:
+- En förälder har INTE automatiskt rätt att se känslig info om den andra föräldern
+- En förälder har begränsad rätt att se vad barnet (särskilt 15+) sagt i förtroende
+- Anmälarens identitet ska skyddas från den anmälda
+- Info som en part berättat om SIG SJÄLV ska skyddas från andra parter
+
+Svara i JSON-format:
+{{
+    "information_concerns": "<party_id för den info gäller>",
+    "disclosed_by": "<party_id för den som berättade, eller null>",
+    "protect_from_parties": ["<party_id>", ...],
+    "reason": "<kort motivering>",
+    "osl_reference": "<relevant lagrum>",
+    "confidence": <0.0-1.0>
+}}"""
+
+
+# Prompt för partsspecifik maskering
+PARTY_MASKING_PROMPT = """Givet följande information, avgör vad som ska maskeras när {requester_type} begär ut handlingarna.
+
+BESTÄLLARE: {requester_description}
+BESTÄLLARENS ROLL: {requester_role}
+
+KÄNSLIG UPPGIFT:
+\"\"\"
+{text}
+\"\"\"
+
+UPPGIFTEN GÄLLER: {owner_party}
+AVSLÖJAD AV: {disclosed_by}
+
+FRÅGA: Ska denna uppgift maskeras när {requester_type} begär ut handlingarna?
+
+Tänk på:
+- Beställaren har rätt till SINA EGNA uppgifter (partsinsyn)
+- Beställaren har INTE rätt till andras känsliga uppgifter
+- Barn över 15 år har rätt att viss info hålls hemlig från föräldrarna
+- Anmälares identitet ska normalt skyddas
+
+Svara i JSON-format:
+{{
+    "action": "<RELEASE|MASK_PARTIAL|MASK_COMPLETE>",
+    "reason": "<motivering>",
+    "legal_basis": "<lagrum>",
+    "confidence": <0.0-1.0>
+}}"""

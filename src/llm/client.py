@@ -174,18 +174,49 @@ class LLMClient:
             LLMError: Vid fel i API-anrop eller JSON-parsning
         """
         from src.core.exceptions import LLMError
+        import re
 
+        # Vissa modeller stöder inte response_format, prova utan om det misslyckas
         response = self.chat(
             messages=messages,
             system_prompt=system_prompt,
             temperature=temperature,
-            response_format={"type": "json_object"},
+            max_tokens=3000,  # Öka för att undvika avklippta svar
         )
 
+        content = response.content.strip()
+
+        # Försök parsa direkt
         try:
-            return json.loads(response.content)
-        except json.JSONDecodeError as e:
-            raise LLMError(f"Kunde inte parsa JSON-svar: {e}")
+            return json.loads(content)
+        except json.JSONDecodeError:
+            pass
+
+        # Försök extrahera JSON från markdown code block
+        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        # Försök hitta JSON-objekt i texten
+        json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', content, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group(0))
+            except json.JSONDecodeError:
+                pass
+
+        # Sista utväg: returnera ett standardsvar
+        logger.warning(f"Kunde inte parsa LLM-svar som JSON, returnerar standardvärden. Svar: {content[:200]}...")
+        return {
+            "primary_category": "NEUTRAL",
+            "sensitivity_level": "MEDIUM",
+            "recommended_action": "ASSESS",
+            "confidence": 0.5,
+            "reasons": ["LLM-svar kunde inte parsas"],
+        }
 
     def analyze_text(
         self,

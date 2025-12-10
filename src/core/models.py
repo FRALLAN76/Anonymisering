@@ -31,6 +31,19 @@ class PersonRole(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class RequesterType(str, Enum):
+    """Typ av beställare - påverkar vad som lämnas ut."""
+
+    SUBJECT_SELF = "SUBJECT_SELF"  # Ärendet handlar om beställaren själv
+    PARENT_1 = "PARENT_1"  # Förälder 1 (t.ex. mamma)
+    PARENT_2 = "PARENT_2"  # Förälder 2 (t.ex. pappa)
+    CHILD_OVER_15 = "CHILD_OVER_15"  # Barn över 15 år
+    LEGAL_GUARDIAN = "LEGAL_GUARDIAN"  # Vårdnadshavare
+    OTHER_PARTY = "OTHER_PARTY"  # Annan part i ärendet
+    AUTHORITY = "AUTHORITY"  # Annan myndighet
+    PUBLIC = "PUBLIC"  # Allmänheten (strängast sekretess)
+
+
 class SensitivityLevel(str, Enum):
     """Känslighetsnivåer enligt OSL."""
 
@@ -76,6 +89,38 @@ class Entity(BaseModel):
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Konfidens 0-1")
     role: Optional[PersonRole] = Field(default=None, description="Roll om PERSON")
     belongs_to: Optional[str] = Field(default=None, description="ID på tillhörande person")
+
+
+class DocumentParty(BaseModel):
+    """En identifierad part i dokumentet."""
+
+    party_id: str = Field(..., description="Unikt ID för parten")
+    name: Optional[str] = Field(default=None, description="Namn om identifierat")
+    ssn: Optional[str] = Field(default=None, description="Personnummer om identifierat")
+    role: PersonRole = Field(..., description="Roll i ärendet")
+    relation: Optional[str] = Field(default=None, description="Relation (mamma, pappa, barn)")
+    is_minor: Optional[bool] = Field(default=None, description="Är minderårig")
+    aliases: list[str] = Field(default_factory=list, description="Alternativa benämningar")
+    mentioned_positions: list[tuple[int, int]] = Field(
+        default_factory=list, description="Positioner där parten nämns"
+    )
+
+
+class SensitiveStatement(BaseModel):
+    """En känslig uppgift och vem den tillhör."""
+
+    text: str = Field(..., description="Textavsnittet")
+    start: int = Field(..., ge=0, description="Startposition")
+    end: int = Field(..., ge=0, description="Slutposition")
+    owner_party_id: str = Field(..., description="Part som uppgiften tillhör/gäller")
+    disclosed_by_party_id: Optional[str] = Field(
+        default=None, description="Part som avslöjade uppgiften (om annan)"
+    )
+    category: SensitivityCategory = Field(..., description="Typ av känslig uppgift")
+    level: SensitivityLevel = Field(..., description="Känslighetsnivå")
+    protect_from: list[str] = Field(
+        default_factory=list, description="Part-IDs som INTE ska se detta"
+    )
 
 
 class PageContent(BaseModel):
