@@ -90,6 +90,7 @@ class EntityMasker:
         entities: list[Entity],
         assessments: Optional[list[SensitivityAssessment]] = None,
         requester_entities: Optional[set[str]] = None,
+        masking_strictness: str = "MODERATE",
     ) -> MaskingResult:
         """
         Maskera text baserat pa entiteter och bedomningar.
@@ -99,11 +100,13 @@ class EntityMasker:
             entities: Lista med entiteter att bearbeta
             assessments: Kanslighetsbedlmningar for sektioner
             requester_entities: Entiteter som tillhor bestallaren (ska inte maskeras)
+            masking_strictness: STRICT (allmanhet), MODERATE (myndighet), RELAXED (partsinsyn)
 
         Returns:
             MaskingResult med maskerad text och statistik
         """
         requester_entities = requester_entities or set()
+        self._masking_strictness = masking_strictness
 
         # Sortera entiteter efter position (bakifran for att bevara positioner)
         sorted_entities = sorted(entities, key=lambda e: e.start, reverse=True)
@@ -159,6 +162,11 @@ class EntityMasker:
         """
         Bestam vilken atgard som ska vidtas for en entitet.
 
+        Tar hansyn till masking_strictness:
+        - STRICT: Allmanhet - maska allt utom tjansteman
+        - MODERATE: Myndigheter - kan fa mer men inte allt
+        - RELAXED: Partsinsyn - bestellaren far se sin egen info
+
         Args:
             entity: Entiteten att bedomma
             assessments: Kanslighetsbedlmningar
@@ -167,25 +175,62 @@ class EntityMasker:
         Returns:
             MaskingAction
         """
-        # Bestallaren far se sina egna uppgifter
+        strictness = getattr(self, '_masking_strictness', 'MODERATE')
+
+        # Bestallaren far se sina egna uppgifter (oavsett strictness)
         if entity.text in requester_entities:
             return MaskingAction.RELEASE
 
-        # Personnummer maskas alltid
+        # Personnummer maskas alltid (oavsett strictness)
         if entity.type == EntityType.SSN:
             return MaskingAction.MASK_COMPLETE
 
         # Datum maskeras aldrig (mottes-, beslutsdatum ar sallan kansliga)
-        # Foddelsedatum fangas via personnummer
         if entity.type == EntityType.DATE:
             return MaskingAction.RELEASE
 
+        # STRICT: Allmanhet - maska nastan allt
+        if strictness == "STRICT":
+            # Bara tjansteman och organisationer ar offentliga
+            if entity.role == PersonRole.PROFESSIONAL:
+                if entity.type == EntityType.SSN:
+                    return MaskingAction.MASK_COMPLETE
+                return MaskingAction.RELEASE
+            if entity.type == EntityType.ORGANIZATION:
+                return MaskingAction.RELEASE
+            # Allt annat maskeras for allmanhet
+            return MaskingAction.MASK_COMPLETE
+
+        # RELAXED: Partsinsyn - mer generös
+        if strictness == "RELAXED":
+            # Tjansteman ar offentliga
+            if entity.role == PersonRole.PROFESSIONAL:
+                return MaskingAction.RELEASE
+            # Anmalare maskas fortfarande
+            if entity.role == PersonRole.REPORTER:
+                return MaskingAction.MASK_COMPLETE
+            # For ovriga: anvand bedömning men var mer generous
+            if assessments:
+                for assessment in assessments:
+                    if self._entity_in_assessment(entity, assessment):
+                        # Bara CRITICAL maskeras helt vid partsinsyn
+                        if assessment.level == SensitivityLevel.CRITICAL:
+                            return MaskingAction.MASK_COMPLETE
+                        elif assessment.level == SensitivityLevel.HIGH:
+                            return MaskingAction.MASK_PARTIAL
+                        else:
+                            return MaskingAction.RELEASE
+            # Standard: lattare maskering
+            if entity.type in (EntityType.PERSON, EntityType.LOCATION):
+                return MaskingAction.MASK_PARTIAL
+            return MaskingAction.RELEASE
+
+        # MODERATE (default): Balanserad maskning
         # Kontrollera roll
         if entity.role:
             if entity.role == PersonRole.REQUESTER:
                 return MaskingAction.RELEASE
             elif entity.role == PersonRole.PROFESSIONAL:
-                # Tjansteman: namn OK, personnummer maskeras
                 if entity.type == EntityType.SSN:
                     return MaskingAction.MASK_COMPLETE
                 return MaskingAction.RELEASE

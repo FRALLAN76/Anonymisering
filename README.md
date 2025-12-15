@@ -20,13 +20,24 @@ Detta verktyg hjälper handläggare inom socialtjänsten att bedöma vilka uppgi
 - **Känslighetsanalys** - LLM-baserad + nyckelordsbaserad bedömning enligt OSL-kategorier
 - **Automatisk maskering** - Flera maskeringsstilar
 - **Partsinsyn** - Stöd för att undanta beställarens egna uppgifter
+- **Kravställningsdialog** - Chatbaserad dialog för att anpassa maskeringen till beställaren
 - **Partsberoendevisualisering** - Interaktivt nätverksdiagram med familjerelationer
 - **Webb-GUI** - Streamlit-baserat gränssnitt med LLM-statusindikatorer
 - **REST API** - FastAPI för integration
 
 ## Nyheter och förbättringar
 
-**Senaste versionen (v2.1) inkluderar:**
+**Senaste versionen (v2.2) inkluderar:**
+
+### Kravställningsdialog (NYTT!)
+- **Chatbaserad kravställning** - Guidad dialog innan analys för att samla in information om beställaren
+- **Snabbvalsknappar** - "Den enskilde själv", "Förälder", "Myndighet", "Allmänheten"
+- **Dynamisk maskeringsnivå** - Maskeringen anpassas baserat på vem som begär handlingen:
+  - **STRICT** (Allmänheten) - Maska allt utom tjänstemän och organisationer
+  - **MODERATE** (Myndigheter) - Balanserad maskering
+  - **RELAXED** (Partsinsyn) - Utökad insyn för den enskilde/vårdnadshavare
+- **Samtyckeshantering** - Om samtycke finns kan mer information lämnas ut
+- **LLM-stödd dialog** - Använder samma LLM som analysen för naturlig konversation
 
 ### NER-förbättringar
 - **Utökade svenska namnlistor** - 100+ vanliga och ovanliga svenska namn
@@ -113,7 +124,11 @@ Visualiseringen visar:
 - Ladda upp PDF-filer för analys
 - Klistra in text direkt
 - Konfigurera maskeringsstil
-- Ange beställarens personnummer för partsinsyn
+- **Kravställningsdialog** - Besvara frågor om beställaren innan analys:
+  1. Vem begär handlingen? (enskilde, förälder, myndighet, allmänheten)
+  2. Vilken relation har beställaren till den ärendet gäller?
+  3. Vad är syftet med begäran?
+  4. Finns samtycke?
 - Se resultat med statistik och textjämförelse
 - Exportera maskerad text och rapport
 - **LLM-statusindikatorer** - Visar när LLM-analys körs
@@ -210,6 +225,7 @@ menprovning/
 │   │   └── postprocessor.py    # Entitetsbearbetning
 │   ├── llm/
 │   │   ├── client.py           # OpenRouter LLM-klient
+│   │   ├── requester_chat.py   # Kravställningsdialog
 │   │   └── prompts/
 │   │       └── sensitivity.py  # OSL-anpassade prompts
 │   ├── analysis/

@@ -22,7 +22,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.workflow.orchestrator import create_workflow
-from src.core.models import SensitivityLevel, DocumentParty
+from src.core.models import SensitivityLevel, DocumentParty, RequesterContext, RequesterType, RelationType
+from src.llm.requester_chat import RequesterChatSession
 
 
 # === KONFIGURATION ===
@@ -48,6 +49,19 @@ if "use_llm" not in st.session_state:
     st.session_state.use_llm = False
 if "api_key" not in st.session_state:
     st.session_state.api_key = None
+# Kravställningsdialog state
+if "requester_context" not in st.session_state:
+    st.session_state.requester_context = None
+if "chat_session" not in st.session_state:
+    st.session_state.chat_session = None
+if "chat_messages" not in st.session_state:
+    st.session_state.chat_messages = []
+if "show_requester_dialog" not in st.session_state:
+    st.session_state.show_requester_dialog = False
+if "pending_file" not in st.session_state:
+    st.session_state.pending_file = None
+if "pending_text" not in st.session_state:
+    st.session_state.pending_text = None
 
 # CSS för bättre utseende - optimerad för större textvisning
 st.markdown("""
@@ -236,51 +250,313 @@ def main():
                 st.session_state.source_name = None
                 st.rerun()
 
-    # Huvudinnehåll
-    tab1, tab2 = st.tabs(["📄 Dokumentanalys", "✏️ Textanalys"])
+    # Huvudinnehåll - Visa kravställningsdialog eller vanliga tabbar
+    if st.session_state.show_requester_dialog:
+        display_requester_dialog(api_key, use_llm, masking_style, analyze_all)
+    else:
+        tab1, tab2 = st.tabs(["📄 Dokumentanalys", "✏️ Textanalys"])
 
-    # Tab 1: Dokumentanalys
-    with tab1:
-        st.subheader("Ladda upp dokument")
+        # Tab 1: Dokumentanalys
+        with tab1:
+            st.subheader("Ladda upp dokument")
 
-        uploaded_file = st.file_uploader(
-            "Välj en PDF-fil",
-            type=["pdf"],
-            help="Ladda upp en socialtjänstakt för analys"
-        )
+            uploaded_file = st.file_uploader(
+                "Välj en PDF-fil",
+                type=["pdf"],
+                help="Ladda upp en socialtjänstakt för analys"
+            )
 
-        if uploaded_file:
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.success(f"✅ Fil uppladdad: {uploaded_file.name}")
-            with col2:
-                analyze_button = st.button(
-                    "🔍 Analysera",
-                    type="primary",
-                    use_container_width=True,
-                    key="analyze_doc"
-                )
+            if uploaded_file:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.success(f"✅ Fil uppladdad: {uploaded_file.name}")
+                with col2:
+                    analyze_button = st.button(
+                        "🔍 Starta kravställning",
+                        type="primary",
+                        use_container_width=True,
+                        key="analyze_doc"
+                    )
 
-            if analyze_button:
-                analyze_document(uploaded_file, api_key, use_llm, masking_style, requester_ssn, analyze_all)
+                if analyze_button:
+                    # Spara filen och starta kravställningsdialog
+                    st.session_state.pending_file = uploaded_file.getvalue()
+                    st.session_state.source_name = uploaded_file.name
+                    start_requester_dialog(api_key)
+                    st.rerun()
 
-    # Tab 2: Textanalys
-    with tab2:
-        st.subheader("Klistra in text")
+        # Tab 2: Textanalys
+        with tab2:
+            st.subheader("Klistra in text")
 
-        text_input = st.text_area(
-            "Text att analysera",
-            height=200,
-            placeholder="Klistra in text från ett dokument här...",
-        )
+            text_input = st.text_area(
+                "Text att analysera",
+                height=200,
+                placeholder="Klistra in text från ett dokument här...",
+            )
 
-        if text_input:
-            if st.button("🔍 Analysera text", type="primary", key="analyze_text"):
-                analyze_text(text_input, api_key, use_llm, masking_style, requester_ssn, analyze_all)
+            if text_input:
+                if st.button("🔍 Starta kravställning", type="primary", key="analyze_text"):
+                    # Spara texten och starta kravställningsdialog
+                    st.session_state.pending_text = text_input
+                    st.session_state.source_name = "Inklistrad text"
+                    start_requester_dialog(api_key)
+                    st.rerun()
 
     # Visa sparade resultat
     if st.session_state.analysis_result is not None:
         display_results(st.session_state.analysis_result, st.session_state.source_name)
+
+
+def start_requester_dialog(api_key: str):
+    """Starta kravställningsdialogen."""
+    st.session_state.chat_session = RequesterChatSession(api_key=api_key if api_key else None)
+    st.session_state.chat_messages = []
+    st.session_state.show_requester_dialog = True
+    st.session_state.requester_context = None
+
+    # Lägg till första meddelandet
+    initial_msg = st.session_state.chat_session.start()
+    st.session_state.chat_messages.append({"role": "assistant", "content": initial_msg})
+
+
+def display_requester_dialog(api_key, use_llm, masking_style, analyze_all):
+    """Visa kravställningsdialogen som en chatt."""
+    st.subheader("💬 Kravställning")
+    st.caption("Svara på frågorna för att anpassa menprövningen till beställaren.")
+
+    # Visa chatthistorik
+    chat_container = st.container()
+    with chat_container:
+        for msg in st.session_state.chat_messages:
+            if msg["role"] == "assistant":
+                with st.chat_message("assistant", avatar="🤖"):
+                    st.markdown(msg["content"])
+            else:
+                with st.chat_message("user", avatar="👤"):
+                    st.markdown(msg["content"])
+
+    # Kolla om dialogen är klar
+    if st.session_state.chat_session and st.session_state.chat_session.is_complete:
+        st.success("✅ Kravställning klar!")
+        st.session_state.requester_context = st.session_state.chat_session.get_context()
+
+        # Visa sammanfattning
+        ctx = st.session_state.requester_context
+        if ctx:
+            with st.expander("📋 Kravställning - sammanfattning", expanded=True):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"**Beställartyp:** {_translate_requester_type(ctx.requester_type)}")
+                    st.markdown(f"**Relation:** {_translate_relation_type(ctx.relation_type)}")
+                with col2:
+                    st.markdown(f"**Syfte:** {ctx.purpose or 'Ej angivet'}")
+                    st.markdown(f"**Maskeringsnivå:** {_translate_strictness(ctx.get_masking_strictness())}")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔍 Starta analys", type="primary", use_container_width=True):
+                run_analysis_with_context(api_key, use_llm, masking_style, analyze_all)
+        with col2:
+            if st.button("🔄 Börja om", use_container_width=True):
+                reset_requester_dialog()
+                st.rerun()
+    else:
+        # Snabbval-knappar för vanliga svar
+        st.markdown("---")
+        st.caption("Snabbval:")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            if st.button("Den enskilde själv", key="quick_self"):
+                process_chat_input("Den enskilde själv begär sina egna handlingar")
+        with col2:
+            if st.button("Förälder", key="quick_parent"):
+                process_chat_input("En förälder begär handlingar")
+        with col3:
+            if st.button("Myndighet", key="quick_authority"):
+                process_chat_input("En myndighet begär handlingar")
+        with col4:
+            if st.button("Allmänheten", key="quick_public"):
+                process_chat_input("En privatperson utan relation begär handlingar")
+
+        # Fritext-input
+        user_input = st.chat_input("Skriv ditt svar...")
+        if user_input:
+            process_chat_input(user_input)
+
+        # Avbryt-knapp
+        if st.button("❌ Avbryt", type="secondary"):
+            reset_requester_dialog()
+            st.rerun()
+
+
+def process_chat_input(user_input: str):
+    """Bearbeta användarens chattinput."""
+    if not st.session_state.chat_session:
+        return
+
+    # Lägg till användarens meddelande
+    st.session_state.chat_messages.append({"role": "user", "content": user_input})
+
+    # Få svar från chattsessionen
+    response = st.session_state.chat_session.chat(user_input)
+    st.session_state.chat_messages.append({"role": "assistant", "content": response})
+
+    st.rerun()
+
+
+def reset_requester_dialog():
+    """Återställ kravställningsdialogen."""
+    st.session_state.show_requester_dialog = False
+    st.session_state.chat_session = None
+    st.session_state.chat_messages = []
+    st.session_state.requester_context = None
+    st.session_state.pending_file = None
+    st.session_state.pending_text = None
+
+
+def run_analysis_with_context(api_key, use_llm, masking_style, analyze_all):
+    """Kör analysen med kravställningskontext."""
+    ctx = st.session_state.requester_context
+
+    # Hämta personnummer från kontext om tillgängligt
+    requester_ssn = ctx.requester_ssn if ctx else None
+
+    if st.session_state.pending_file:
+        # Skapa temporär fil
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(st.session_state.pending_file)
+            tmp_path = tmp.name
+
+        try:
+            analyze_document_with_context(
+                tmp_path,
+                api_key,
+                use_llm,
+                masking_style,
+                requester_ssn,
+                analyze_all,
+                ctx
+            )
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    elif st.session_state.pending_text:
+        analyze_text_with_context(
+            st.session_state.pending_text,
+            api_key,
+            use_llm,
+            masking_style,
+            requester_ssn,
+            analyze_all,
+            ctx
+        )
+
+    # Återställ dialog-state
+    st.session_state.show_requester_dialog = False
+    st.session_state.pending_file = None
+    st.session_state.pending_text = None
+
+
+def analyze_document_with_context(tmp_path, api_key, use_llm, masking_style, requester_ssn, analyze_all, ctx):
+    """Analysera dokument med kravställningskontext."""
+    with st.spinner("Analyserar dokument... Detta kan ta några minuter."):
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        status_text.text("Skapar workflow med kravställning...")
+        progress_bar.progress(10)
+
+        workflow = create_workflow(
+            api_key=api_key if use_llm else None,
+            use_llm=use_llm and bool(api_key),
+            masking_style=masking_style,
+            analyze_all_sections=analyze_all,
+            requester_context=ctx,  # Skicka med kontext
+        )
+
+        status_text.text("Extraherar text från PDF...")
+        progress_bar.progress(20)
+
+        result = workflow.process_document(
+            document_path=tmp_path,
+            requester_ssn=requester_ssn,
+            requester_context=ctx,
+        )
+
+        progress_bar.progress(100)
+        status_text.empty()
+        progress_bar.empty()
+
+    st.session_state.analysis_result = result
+    st.session_state.use_llm = use_llm
+    st.session_state.api_key = api_key
+    st.rerun()
+
+
+def analyze_text_with_context(text, api_key, use_llm, masking_style, requester_ssn, analyze_all, ctx):
+    """Analysera text med kravställningskontext."""
+    with st.spinner("Analyserar text..."):
+        workflow = create_workflow(
+            api_key=api_key if use_llm else None,
+            use_llm=use_llm and bool(api_key),
+            masking_style=masking_style,
+            analyze_all_sections=analyze_all,
+            requester_context=ctx,
+        )
+
+        result = workflow.process_text(
+            text=text,
+            document_id="text_input",
+            requester_ssn=requester_ssn,
+            requester_context=ctx,
+        )
+
+    st.session_state.analysis_result = result
+    st.session_state.use_llm = use_llm
+    st.session_state.api_key = api_key
+    st.rerun()
+
+
+def _translate_requester_type(req_type: RequesterType) -> str:
+    """Översätt RequesterType till svenska."""
+    translations = {
+        RequesterType.SUBJECT_SELF: "Den enskilde själv",
+        RequesterType.PARENT_1: "Förälder",
+        RequesterType.PARENT_2: "Förälder",
+        RequesterType.CHILD_OVER_15: "Barn över 15 år",
+        RequesterType.LEGAL_GUARDIAN: "Vårdnadshavare",
+        RequesterType.OTHER_PARTY: "Annan part",
+        RequesterType.AUTHORITY: "Myndighet",
+        RequesterType.PUBLIC: "Allmänheten",
+    }
+    return translations.get(req_type, str(req_type))
+
+
+def _translate_relation_type(rel_type: RelationType) -> str:
+    """Översätt RelationType till svenska."""
+    translations = {
+        RelationType.SELF: "Ärendet gäller beställaren själv",
+        RelationType.PARENT: "Förälder till den ärendet gäller",
+        RelationType.CHILD: "Barn till den ärendet gäller",
+        RelationType.SPOUSE: "Make/maka/sambo",
+        RelationType.SIBLING: "Syskon",
+        RelationType.OTHER_RELATIVE: "Annan släkting",
+        RelationType.LEGAL_REPRESENTATIVE: "Juridiskt ombud",
+        RelationType.AUTHORITY_REPRESENTATIVE: "Myndighetsperson",
+        RelationType.NO_RELATION: "Ingen direkt relation",
+    }
+    return translations.get(rel_type, str(rel_type))
+
+
+def _translate_strictness(strictness: str) -> str:
+    """Översätt maskeringsnivå till svenska."""
+    translations = {
+        "STRICT": "🔒 Strikt (allmänheten)",
+        "MODERATE": "🔓 Måttlig (viss partsinsyn)",
+        "RELAXED": "✅ Utökad partsinsyn",
+    }
+    return translations.get(strictness, strictness)
 
 
 def analyze_document(uploaded_file, api_key, use_llm, masking_style, requester_ssn, analyze_all=True):

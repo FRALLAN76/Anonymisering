@@ -44,6 +44,20 @@ class RequesterType(str, Enum):
     PUBLIC = "PUBLIC"  # Allmänheten (strängast sekretess)
 
 
+class RelationType(str, Enum):
+    """Relation till den ärendet gäller - påverkar partsinsyn."""
+
+    SELF = "SELF"  # Personen själv
+    PARENT = "PARENT"  # Förälder
+    CHILD = "CHILD"  # Barn
+    SPOUSE = "SPOUSE"  # Make/maka/sambo
+    SIBLING = "SIBLING"  # Syskon
+    OTHER_RELATIVE = "OTHER_RELATIVE"  # Annan släkting
+    LEGAL_REPRESENTATIVE = "LEGAL_REPRESENTATIVE"  # Juridiskt ombud
+    AUTHORITY_REPRESENTATIVE = "AUTHORITY_REPRESENTATIVE"  # Myndighetsperson
+    NO_RELATION = "NO_RELATION"  # Ingen relation (allmänheten)
+
+
 class SensitivityLevel(str, Enum):
     """Känslighetsnivåer enligt OSL."""
 
@@ -161,6 +175,36 @@ class SensitivityAssessment(BaseModel):
     legal_basis: str = Field(default="OSL 26:1", description="Lagstöd")
     recommended_action: MaskingAction = Field(..., description="Rekommenderad åtgärd")
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Bedömningskonfidens")
+
+
+class RequesterContext(BaseModel):
+    """Kontext för beställaren - samlas in via kravställningsdialog."""
+
+    requester_type: RequesterType = Field(..., description="Typ av beställare")
+    relation_type: RelationType = Field(..., description="Relation till den ärendet gäller")
+    requester_name: Optional[str] = Field(default=None, description="Beställarens namn")
+    requester_ssn: Optional[str] = Field(default=None, description="Beställarens personnummer")
+    subject_name: Optional[str] = Field(default=None, description="Namn på den ärendet gäller")
+    purpose: Optional[str] = Field(default=None, description="Syfte med begäran")
+    is_authority: bool = Field(default=False, description="Om beställaren är en myndighet")
+    authority_name: Optional[str] = Field(default=None, description="Myndighetens namn")
+    has_consent: bool = Field(default=False, description="Om samtycke finns från den enskilde")
+    special_circumstances: Optional[str] = Field(
+        default=None, description="Särskilda omständigheter att beakta"
+    )
+
+    def get_masking_strictness(self) -> str:
+        """Returnera maskeringsnivå baserat på beställartyp."""
+        if self.requester_type == RequesterType.PUBLIC:
+            return "STRICT"  # Allmänheten - maska allt utom offentliga uppgifter
+        elif self.requester_type == RequesterType.AUTHORITY:
+            return "MODERATE"  # Myndigheter - kan få mer men ej allt
+        elif self.requester_type == RequesterType.SUBJECT_SELF:
+            return "RELAXED"  # Egen begäran - partsinsyn
+        elif self.relation_type in [RelationType.PARENT, RelationType.LEGAL_REPRESENTATIVE]:
+            return "RELAXED"  # Vårdnadshavare/ombud - partsinsyn
+        else:
+            return "MODERATE"
 
 
 class AnalysisResult(BaseModel):

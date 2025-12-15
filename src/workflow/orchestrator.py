@@ -14,9 +14,11 @@ from src.core.models import (
     DocumentParty,
     Entity,
     ExtractedDocument,
+    PersonRole,
     SensitivityAssessment,
     SensitivityLevel,
     RequesterType,
+    RequesterContext,
 )
 from src.ingestion.pdf_extractor import PDFExtractor
 from src.ner.regex_ner import RegexNER
@@ -145,6 +147,7 @@ class MenprovningWorkflow:
         requester_ssn: Optional[str] = None,
         requester_type: Optional[RequesterType] = None,
         requester_party_id: Optional[str] = None,
+        requester_context: Optional[RequesterContext] = None,
     ) -> WorkflowResult:
         """
         Bearbeta ett dokument genom hela pipelinen.
@@ -154,12 +157,20 @@ class MenprovningWorkflow:
             requester_ssn: Bestellarens personnummer (for partsinsyn)
             requester_type: Typ av bestallare (SUBJECT_SELF, PARENT_1, etc.)
             requester_party_id: Part-ID om bestallaren ar identifierad part
+            requester_context: Kravstallningskontext fran dialog
 
         Returns:
             WorkflowResult med all information
         """
         start_time = time.time()
         path = Path(document_path)
+
+        # Anvand kontext om tillganglig
+        ctx = requester_context or getattr(self, 'requester_context', None)
+        if ctx:
+            requester_type = requester_type or ctx.requester_type
+            requester_ssn = requester_ssn or ctx.requester_ssn
+            logger.info(f"Kravstallning: {ctx.requester_type}, relation: {ctx.relation_type}")
 
         logger.info(f"Borjar bearbetning av {path.name}")
 
@@ -182,16 +193,16 @@ class MenprovningWorkflow:
         # 5. Identifiera bestallarens entiteter och part
         requester_entities = set()
         requester_party_id = self._identify_requester_party(
-            requester_ssn, requester_type, requester_party_id, 
+            requester_ssn, requester_type, requester_party_id,
             parties, entities, doc.full_text
         )
-        
+
         if requester_ssn:
             requester_entities = self._identify_requester_entities(
                 requester_ssn, entities, doc.full_text
             )
 
-        # 6. Maskning med partsinsyn
+        # 6. Maskning med partsinsyn och kravstallningskontext
         logger.info("Steg 5: Applicerar maskning...")
         masking_result = self._apply_party_aware_masking(
             doc.full_text,
@@ -200,6 +211,7 @@ class MenprovningWorkflow:
             requester_type or RequesterType.PUBLIC,
             requester_party_id,
             parties,
+            ctx,
         )
 
         # Berakna tid
@@ -233,6 +245,7 @@ class MenprovningWorkflow:
         requester_ssn: Optional[str] = None,
         requester_type: Optional[RequesterType] = None,
         requester_party_id: Optional[str] = None,
+        requester_context: Optional[RequesterContext] = None,
     ) -> WorkflowResult:
         """
         Bearbeta text direkt (utan PDF-extraktion).
@@ -243,33 +256,41 @@ class MenprovningWorkflow:
             requester_ssn: Bestellarens personnummer
             requester_type: Typ av bestallare (SUBJECT_SELF, PARENT_1, etc.)
             requester_party_id: Part-ID om bestallaren ar identifierad part
+            requester_context: Kravstallningskontext fran dialog
 
         Returns:
             WorkflowResult
         """
         start_time = time.time()
 
+        # Anvand kontext om tillganglig
+        ctx = requester_context or getattr(self, 'requester_context', None)
+        if ctx:
+            requester_type = requester_type or ctx.requester_type
+            requester_ssn = requester_ssn or ctx.requester_ssn
+
         # 1. NER
         entities = self._run_ner(text)
 
-        # 2. Kanslighetsanalys
-        # 2. Kanslighetsanalys
-        assessments, overall_level = self._analyze_sensitivity(text, entities)
-        # 2. Partsanalys (identifiera alla parter)
+        # 2. Partsanalys
         parties = self._analyze_parties(text, entities)
+
         # 3. Kanslighetsanalys
+        assessments, overall_level = self._analyze_sensitivity(text, entities)
+
         # 4. Identifiera beställarens entiteter och part
         requester_entities = set()
         requester_party_id = self._identify_requester_party(
-            requester_ssn, requester_type, requester_party_id, 
+            requester_ssn, requester_type, requester_party_id,
             parties, entities, text
         )
-        
+
         if requester_ssn:
             requester_entities = self._identify_requester_entities(
                 requester_ssn, entities, text
             )
-        # 5. Maskning med partsinsyn
+
+        # 5. Maskning med partsinsyn och kravstallningskontext
         masking_result = self._apply_party_aware_masking(
             text,
             entities,
@@ -277,22 +298,7 @@ class MenprovningWorkflow:
             requester_type or RequesterType.PUBLIC,
             requester_party_id,
             parties,
-        )
-        assessments, overall_level = self._analyze_sensitivity(text, entities)
-
-        # 3. Identifiera bestellarens entiteter
-        requester_entities = set()
-        if requester_ssn:
-            requester_entities = self._identify_requester_entities(
-                requester_ssn, entities, text
-            )
-
-        # 4. Maskning
-        masking_result = self.masker.mask_text(
-            text,
-            entities,
-            assessments,
-            requester_entities,
+            ctx,
         )
 
         processing_time = (time.time() - start_time) * 1000
@@ -485,9 +491,10 @@ class MenprovningWorkflow:
         requester_type: RequesterType,
         requester_party_id: Optional[str],
         parties: list,
+        requester_context: Optional[RequesterContext] = None,
     ) -> MaskingResult:
         """
-        Applicera maskning med partsinsyn.
+        Applicera maskning med partsinsyn och kravstallningskontext.
 
         Args:
             text: Texten att maskera
@@ -496,6 +503,7 @@ class MenprovningWorkflow:
             requester_type: Typ av beställare
             requester_party_id: Beställarens part-ID
             parties: Alla identifierade parter
+            requester_context: Kravstallningskontext fran dialog
 
         Returns:
             MaskingResult
@@ -519,12 +527,24 @@ class MenprovningWorkflow:
                         requester_entities.add(party.ssn)
                         requester_entities.add(party.ssn.replace("-", ""))
 
-        # Applicera standardmaskering
+        # Bestam maskeringsstranghet baserat pa kontext
+        strictness = "MODERATE"
+        if requester_context:
+            strictness = requester_context.get_masking_strictness()
+            logger.info(f"Maskeringsniva fran kravstallning: {strictness}")
+
+            # Om samtycke finns, kan vi vara mer generosa
+            if requester_context.has_consent:
+                logger.info("Samtycke finns - kan lamna ut mer")
+                strictness = "RELAXED"
+
+        # Applicera standardmaskering med stranghetsniva
         return self.masker.mask_text(
             text,
             entities,
             assessments,
             requester_entities,
+            masking_strictness=strictness,
         )
 
     def _identify_requester_entities(
@@ -599,31 +619,8 @@ def create_workflow(
     api_key: Optional[str] = None,
     use_llm: bool = True,
     masking_style: str = "brackets",
-) -> MenprovningWorkflow:
-    """
-    Fabriksfunktion for att skapa en workflow.
-
-    Args:
-        api_key: OpenRouter API-nyckel
-        use_llm: Anvand LLM for analys
-        masking_style: Maskeringsstil
-
-    Returns:
-        Konfigurerad MenprovningWorkflow
-    """
-    config = WorkflowConfig(
-        use_llm=use_llm,
-        llm_api_key=api_key,
-        masking_style=masking_style,
-    )
-    return MenprovningWorkflow(config)
-
-
-def create_workflow(
-    api_key: Optional[str] = None,
-    use_llm: bool = True,
-    masking_style: str = "brackets",
     analyze_all_sections: bool = True,
+    requester_context: Optional["RequesterContext"] = None,
 ) -> MenprovningWorkflow:
     """
     Fabriksfunktion for att skapa en workflow.
@@ -633,6 +630,7 @@ def create_workflow(
         use_llm: Anvand LLM for analys
         masking_style: Maskeringsstil
         analyze_all_sections: Analysera hela dokumentet
+        requester_context: Kravstallningskontext (vem begar, relation, etc.)
 
     Returns:
         Konfigurerad MenprovningWorkflow
@@ -643,4 +641,6 @@ def create_workflow(
         masking_style=masking_style,
         analyze_all_sections=analyze_all_sections,
     )
-    return MenprovningWorkflow(config)
+    workflow = MenprovningWorkflow(config)
+    workflow.requester_context = requester_context
+    return workflow
