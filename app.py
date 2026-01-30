@@ -362,29 +362,13 @@ def display_requester_dialog(api_key, use_llm, masking_style, analyze_all):
                 reset_requester_dialog()
                 st.rerun()
     else:
-        # Snabbval-knappar för vanliga svar
-        st.markdown("---")
-        st.caption("Snabbval:")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            if st.button("Den enskilde själv", key="quick_self"):
-                process_chat_input("Den enskilde själv begär sina egna handlingar")
-        with col2:
-            if st.button("Förälder", key="quick_parent"):
-                process_chat_input("En förälder begär handlingar")
-        with col3:
-            if st.button("Myndighet", key="quick_authority"):
-                process_chat_input("En myndighet begär handlingar")
-        with col4:
-            if st.button("Allmänheten", key="quick_public"):
-                process_chat_input("En privatperson utan relation begär handlingar")
-
         # Fritext-input
         user_input = st.chat_input("Skriv ditt svar...")
         if user_input:
             process_chat_input(user_input)
 
         # Avbryt-knapp
+        st.markdown("---")
         if st.button("❌ Avbryt", type="secondary"):
             reset_requester_dialog()
             st.rerun()

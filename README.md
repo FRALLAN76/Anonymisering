@@ -31,7 +31,6 @@ Detta verktyg hjälper handläggare inom socialtjänsten att bedöma vilka uppgi
 
 ### Kravställningsdialog (NYTT!)
 - **Chatbaserad kravställning** - Guidad dialog innan analys för att samla in information om beställaren
-- **Snabbvalsknappar** - "Den enskilde själv", "Förälder", "Myndighet", "Allmänheten"
 - **Dynamisk maskeringsnivå** - Maskeringen anpassas baserat på vem som begär handlingen:
   - **STRICT** (Allmänheten) - Maska allt utom tjänstemän och organisationer
   - **MODERATE** (Myndigheter) - Balanserad maskering
