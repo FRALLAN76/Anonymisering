@@ -101,6 +101,26 @@ sudo apt-get install tesseract-ocr tesseract-ocr-swe
 |----------|----------|-------------|
 | `OPENROUTER_API_KEY` | For LLM features | API key for LLM analysis |
 
+## Web Search (SearXNG)
+
+A local SearXNG instance is available for web searches at `http://localhost:8080/`.
+
+**Important**: GET requests return 403 Forbidden. Use POST method instead:
+
+```bash
+# Search the web
+curl -s -X POST "http://localhost:8080/search" \
+  -d "q=your search query" \
+  -H "User-Agent: Mozilla/5.0"
+
+# The response is HTML - parse for result URLs and then fetch them directly
+```
+
+**Workflow for research tasks:**
+1. Search using POST to SearXNG
+2. Extract relevant URLs from the HTML response
+3. Fetch specific URLs directly with WebFetch or curl
+
 ## Important Files
 
 | File | Purpose |
