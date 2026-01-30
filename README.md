@@ -81,7 +81,11 @@ source .venv/bin/activate  # Linux/Mac
 # eller: .venv\Scripts\activate  # Windows
 
 # Installera beroenden
-pip install pymupdf pydantic requests streamlit fastapi uvicorn
+pip install pymupdf pydantic requests streamlit fastapi uvicorn python-dotenv pytesseract
+
+# För OCR-funktionalitet (valfritt), installera även Tesseract:
+# Ubuntu/Debian: sudo apt-get install tesseract-ocr tesseract-ocr-swe
+# macOS: brew install tesseract tesseract-lang
 
 # Kör GUI
 streamlit run app.py
